@@ -1,0 +1,166 @@
+# jar2mp
+
+JAR to Maven Project Converter - 将 JAR/WAR 文件自动还原为标准 Maven 项目，支持批量处理。
+
+## 功能特性
+
+- **批量处理**: 同时选择多个 JAR/WAR 文件或整个目录进行批量分析和构建
+- **双模式运行**: 支持 GUI 图形界面 和 CLI 命令行两种使用方式
+- **自动依赖检测**: 4 层检测策略（嵌入 POM > MANIFEST.MF > 字节码扫描 > 文件名启发式）
+- **自动反编译**: 集成 CFR 反编译器，将 .class 文件还原为 .java 源码
+- **智能坐标识别**: 自动提取 groupId / artifactId / version
+- **80+ 常见库映射**: 内置 Google、Apache Commons、Spring、Jackson、Alibaba 等常见库的包名→Maven 坐标映射
+- **WAR 文件支持**: 自动识别 WAR 包并处理 WEB-INF 结构
+- **可编辑依赖**: GUI 中可手动增删、编辑、勾选检测到的依赖
+- **pom.xml 预览**: 生成前可预览和编辑 pom.xml，切换文件时自动缓存编辑内容
+- **主题切换**: GUI 支持 FlatLaf 多主题（Light / Dark / Darcula / IntelliJ / Mac）
+
+## 编译构建
+
+```bash
+mvn clean package
+```
+
+构建产物位于 `target/jar2mp-1.0-jar-with-dependencies.jar`。
+
+## 使用方式
+
+### GUI 模式
+
+直接双击 JAR 包或无参数启动：
+
+```bash
+java -jar jar2mp-1.0-jar-with-dependencies.jar
+```
+
+操作流程：
+1. 点击 **添加文件** 选择一个或多个 JAR/WAR 文件，或点击 **添加目录** 自动扫描目录中的 jar/war 文件
+2. 设置输出目录
+3. 点击 **分析全部** 批量分析所有文件的 JAR 结构和依赖
+4. 在文件列表中点击切换不同文件，查看各自的分析结果和依赖
+5. 在 **依赖管理** 标签页中编辑选中文件的依赖
+6. 点击 **生成 pom.xml** 预览当前选中文件的 pom.xml
+7. 点击 **构建全部** 批量生成所有文件的 Maven 项目
+
+<!-- GUI 主界面截图 -->
+![GUI](images/gui-main.png)
+
+<!-- 分析结果截图 -->
+![Analysis](images/gui-analysis.png)
+
+<!-- 依赖编辑截图 -->
+![Dependencies](images/gui-dependencies.png)
+
+### CLI 模式
+
+带参数启动即进入 CLI 模式，支持多文件和目录输入：
+
+```bash
+java -jar jar2mp-1.0-jar-with-dependencies.jar [options] <jar-or-war-files...>
+```
+
+#### 常用示例
+
+```bash
+# 单个文件
+java -jar jar2mp.jar target/app.jar
+
+# 批量处理多个文件
+java -jar jar2mp.jar a.jar b.jar c.jar --verbose
+
+# 自动扫描目录中所有 jar/war 文件
+java -jar jar2mp.jar /path/to/libs/ -o /tmp/output
+
+# 指定输出目录和坐标
+java -jar jar2mp.jar -o /tmp/project -g com.example -a myapp target/app.jar
+
+# 详细输出模式
+java -jar jar2mp.jar --verbose lib.jar
+
+# 跳过反编译（仅复制 .class 文件）
+java -jar jar2mp.jar --no-decompile lib.jar
+
+# 导出检测到的依赖到文件
+java -jar jar2mp.jar --export-deps deps.txt app.jar
+
+# 覆盖已存在的输出目录
+java -jar jar2mp.jar -f app.jar
+```
+
+<!-- CLI 运行截图 -->
+![CLI](images/cli-run.png)
+
+#### 完整参数列表
+
+```
+Usage: java -jar jar2mp.jar [options] <jar-or-war-files...>
+
+Arguments:
+  <jar-or-war-files...>           JAR/WAR 文件或目录路径（支持多个，目录自动扫描）
+
+Options:
+  -o, --output <dir>              输出目录（默认当前目录）
+  -g, --groupId <groupId>         覆盖检测到的 groupId
+  -a, --artifactId <artifactId>   覆盖检测到的 artifactId
+  -v, --version <version>         覆盖检测到的 version
+  -j, --java-version <version>    目标 Java 版本（默认自动检测）
+  -p, --packaging <type>          打包类型: jar / war（默认自动检测）
+      --no-decompile              跳过反编译，直接复制 .class 文件
+      --no-dependencies           跳过依赖检测
+      --no-resources              跳过资源文件提取
+      --mapping-file <file>       自定义包名映射文件
+      --aggressive-scan           激进扫描模式
+      --include-synthetic         包含合成/桥接方法
+      --export-deps <file>        导出依赖到文件
+      --import-deps <file>        从文件导入依赖
+  -f, --force                     覆盖已存在的输出目录
+  -q, --quiet                     静默模式
+      --verbose                   详细输出
+  -h, --help                      显示帮助
+      --version                   显示版本号
+```
+
+## 依赖检测策略
+
+工具按以下优先级依次检测 Maven 依赖：
+
+| 优先级 | 策略 | 说明 | 置信度 |
+|--------|------|------|--------|
+| 1 | 嵌入 POM | 读取 `META-INF/maven/**/pom.properties` 和 `pom.xml` | HIGH |
+| 2 | MANIFEST.MF | 解析 `Class-Path`、`Implementation-*` 等属性 | MEDIUM |
+| 3 | 字节码扫描 | 解析 .class 常量池中的包引用，匹配映射数据库 | LOW |
+| 4 | 文件名启发式 | 从 JAR 文件名猜测 `artifactId-version` | GUESS |
+
+## 生成项目结构
+
+每个输入文件在输出目录下生成独立的项目：
+
+```
+{output}/
+├── {artifactId-1}/
+│   ├── pom.xml
+│   └── src/
+│       ├── main/
+│       │   ├── java/          ← 反编译后的 .java 文件（保留包结构）
+│       │   └── resources/     ← 非类文件资源 + META-INF/services
+│       └── test/
+│           ├── java/
+│           └── resources/
+├── {artifactId-2}/
+│   ├── pom.xml
+│   └── src/
+│       └── ...
+└── ...
+```
+
+## 项目技术栈
+
+- **Java 8** - 目标兼容版本
+- **FlatLaf** - GUI 主题框架
+- **CFR** - Java 反编译器
+- **Gson** - JSON 处理
+- **Maven Assembly Plugin** - 打包为可执行 fat JAR
+
+## License
+
+MIT
