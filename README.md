@@ -42,14 +42,11 @@ java -jar jar2mp-1.0-jar-with-dependencies.jar
 6. 点击 **生成 pom.xml** 预览当前选中文件的 pom.xml
 7. 点击 **构建全部** 批量生成所有文件的 Maven 项目
 
-<!-- GUI 主界面截图 -->
 ![GUI](images/gui-main.png)
 
-<!-- 分析结果截图 -->
-![Analysis](images/gui-analysis.png)
-
-<!-- 依赖编辑截图 -->
 ![Dependencies](images/gui-dependencies.png)
+
+![Pom Analysis](images/gui-pom.png)
 
 ### CLI 模式
 
