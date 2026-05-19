@@ -1,5 +1,6 @@
 package com.z0fsec.jar2mp.ui;
 
+import com.formdev.flatlaf.util.SystemFileChooser;
 import com.z0fsec.jar2mp.core.JarAnalyzer;
 import com.z0fsec.jar2mp.core.PomGenerator;
 import com.z0fsec.jar2mp.core.ProjectBuilder;
@@ -11,7 +12,6 @@ import com.z0fsec.jar2mp.util.IoUtils;
 import javax.swing.*;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
-import javax.swing.filechooser.FileNameExtensionFilter;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
@@ -215,13 +215,14 @@ public class MainPanel extends BasePanel {
     // ========== 文件列表操作 ==========
 
     private void browseAndAddFiles() {
-        JFileChooser chooser = new JFileChooser();
+        SystemFileChooser chooser = new SystemFileChooser();
         chooser.setMultiSelectionEnabled(true);
-        chooser.setFileFilter(new FileNameExtensionFilter("JAR/WAR 文件", "jar", "war"));
-        if (fileListModel.size() > 0) {
+        SystemFileChooser.FileNameExtensionFilter filter = new SystemFileChooser.FileNameExtensionFilter("JAR/WAR 文件 (*.jar, *.war)", "jar", "war");
+        chooser.setFileFilter(filter);
+        if (!fileListModel.isEmpty()) {
             chooser.setCurrentDirectory(fileListModel.get(0).getParentFile());
         }
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+        if (chooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
             for (File f : chooser.getSelectedFiles()) {
                 if (!containsFile(f)) {
                     fileListModel.addElement(f);
@@ -232,9 +233,9 @@ public class MainPanel extends BasePanel {
     }
 
     private void browseAndAddDirectory() {
-        JFileChooser chooser = new JFileChooser();
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+        SystemFileChooser chooser = new SystemFileChooser();
+        chooser.setFileSelectionMode(SystemFileChooser.DIRECTORIES_ONLY);
+        if (chooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
             File dir = chooser.getSelectedFile();
             File[] jars = dir.listFiles((d, name) ->
                     name.toLowerCase().endsWith(".jar") || name.toLowerCase().endsWith(".war"));
@@ -288,9 +289,9 @@ public class MainPanel extends BasePanel {
     }
 
     private void browseOutputDir() {
-        JFileChooser chooser = new JFileChooser();
-        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+        SystemFileChooser chooser = new SystemFileChooser();
+        chooser.setFileSelectionMode(SystemFileChooser.DIRECTORIES_ONLY);
+        if (chooser.showOpenDialog(this) == SystemFileChooser.APPROVE_OPTION) {
             outputDirField.setText(chooser.getSelectedFile().getAbsolutePath());
         }
     }
