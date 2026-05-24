@@ -18,6 +18,50 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void stripsDecompilerHeader() {
+        String processed = new SourcePostProcessor().process(
+                "/*\n"
+                        + " * Decompiled with CFR 0.152.\n"
+                        + " * \n"
+                        + " * Could not load the following classes:\n"
+                        + " *  demo.Dependency\n"
+                        + " */\n"
+                        + "package demo;\n\npublic class Sample {}\n",
+                "demo.Sample");
+
+        assertFalse(processed.contains("Decompiled with"));
+        assertTrue(processed.startsWith("package demo;"));
+    }
+
+    @Test
+    void removesImplicitImports() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import demo.Helper;\n"
+                        + "import java.lang.String;\n"
+                        + "import demo.nested.Other;\n"
+                        + "import java.util.List;\n\n"
+                        + "public class Sample {}\n",
+                "demo.Sample");
+
+        assertFalse(processed.contains("import demo.Helper;"));
+        assertFalse(processed.contains("import java.lang.String;"));
+        assertTrue(processed.contains("import demo.nested.Other;"));
+        assertTrue(processed.contains("import java.util.List;"));
+    }
+
+    @Test
+    void removesParameterArrayCasts() {
+        String processed = new SourcePostProcessor().process(
+                "public static void main(String[] args) {\n"
+                        + "        run((String[])args);\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("run(args);"));
+        assertFalse(processed.contains("(String[])args"));
+    }
+
+    @Test
     void addsListElementTypeWhenEnhancedForUsesTypedElement() {
         String processed = new SourcePostProcessor().process(
                 "List findPetTypes = this.types.findPetTypes();\n"
