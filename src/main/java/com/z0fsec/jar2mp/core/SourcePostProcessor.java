@@ -13,6 +13,12 @@ public class SourcePostProcessor {
             "List\\s+(\\w+)\\s*=\\s*([^;]+);\\n(\\s*)for\\s*\\(([^:\\n]+?)\\s+(\\w+)\\s*:\\s*\\1\\)");
     private static final Pattern RAW_OPTIONAL_OR_ELSE_THROW = Pattern.compile(
             "Optional\\s+(\\w+)\\s*=\\s*([^;]+);\\n(\\s*)([\\w.$<>]+)\\s+(\\w+)\\s*=\\s*\\(([^)]+)\\)\\1\\.orElseThrow");
+    private static final Pattern SYNTHETIC_SWITCH_MAP = Pattern.compile(
+            "switch \\(\\d+\\.\\$SwitchMap\\$[\\w$]+\\[([^\\]]+\\.ordinal\\(\\))\\]\\)");
+    private static final Pattern NUMERIC_ANONYMOUS_TYPE_DECLARATION = Pattern.compile(
+            "(?m)^(\\s*)\\d+\\s+(\\w+)\\s*=");
+    private static final Pattern NUMERIC_ANONYMOUS_CONSTRUCTOR = Pattern.compile("new\\s+\\d+\\([^;\\n]*\\)");
+    private static final Pattern NUMERIC_ANONYMOUS_CAST = Pattern.compile("\\(\\d+\\)\\s*null");
 
     public String process(String source) {
         return process(source, null);
@@ -29,6 +35,10 @@ public class SourcePostProcessor {
         processed = removeParameterArrayCasts(processed);
         processed = addListElementTypes(processed);
         processed = addOptionalElementTypes(processed);
+        processed = replaceUnavailableAnonymousInnerClasses(processed);
+        processed = replaceSyntheticSwitchMaps(processed);
+        processed = replaceNumericAnonymousClassFragments(processed);
+        processed = balanceNullArgumentStatements(processed);
         return processed;
     }
 
@@ -133,5 +143,77 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private String replaceUnavailableAnonymousInnerClasses(String source) {
+        return source.replace("new /* Unavailable Anonymous Inner Class!! */", "null");
+    }
+
+    private String replaceSyntheticSwitchMaps(String source) {
+        Matcher matcher = SYNTHETIC_SWITCH_MAP.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String ordinalExpression = matcher.group(1);
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement("switch (" + ordinalExpression + ")"));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String replaceNumericAnonymousClassFragments(String source) {
+        String processed = NUMERIC_ANONYMOUS_CAST.matcher(source).replaceAll("null");
+        processed = NUMERIC_ANONYMOUS_CONSTRUCTOR.matcher(processed).replaceAll("null");
+
+        Matcher matcher = NUMERIC_ANONYMOUS_TYPE_DECLARATION.matcher(processed);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "Object " + matcher.group(2) + " ="));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String balanceNullArgumentStatements(String source) {
+        String[] lines = source.split("\\n", -1);
+        StringBuilder builder = new StringBuilder(source.length());
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                builder.append('\n');
+            }
+            builder.append(balanceNullArgumentStatement(lines[i]));
+        }
+        return builder.toString();
+    }
+
+    private String balanceNullArgumentStatement(String line) {
+        String trimmed = line.trim();
+        if (!trimmed.endsWith("null;")) {
+            return line;
+        }
+
+        int missingClosers = count(line, '(') - count(line, ')');
+        if (missingClosers <= 0) {
+            return line;
+        }
+
+        int semicolon = line.lastIndexOf(';');
+        StringBuilder builder = new StringBuilder(line.length() + missingClosers);
+        builder.append(line, 0, semicolon);
+        for (int i = 0; i < missingClosers; i++) {
+            builder.append(')');
+        }
+        builder.append(line.substring(semicolon));
+        return builder.toString();
+    }
+
+    private int count(String value, char target) {
+        int count = 0;
+        for (int i = 0; i < value.length(); i++) {
+            if (value.charAt(i) == target) {
+                count++;
+            }
+        }
+        return count;
     }
 }

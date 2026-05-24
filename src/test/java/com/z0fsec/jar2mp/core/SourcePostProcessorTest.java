@@ -82,4 +82,50 @@ class SourcePostProcessorTest {
         assertTrue(processed.contains("Owner owner = optionalOwner.orElseThrow"));
         assertFalse(processed.contains("(Owner)optionalOwner"));
     }
+
+    @Test
+    void replacesUnavailableAnonymousInnerClassPlaceholder() {
+        String processed = new SourcePostProcessor().process(
+                "private static final Runnable RUNNABLE = new /* Unavailable Anonymous Inner Class!! */;\n");
+
+        assertTrue(processed.contains("RUNNABLE = null;"));
+        assertFalse(processed.contains("Unavailable Anonymous Inner Class"));
+    }
+
+    @Test
+    void replacesSyntheticSwitchMapReferenceWithOrdinalSwitch() {
+        String processed = new SourcePostProcessor().process(
+                "switch (1.$SwitchMap$com$example$Mode[value.getMode().ordinal()]) {\n"
+                        + "    case 1: break;\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("switch (value.getMode().ordinal())"));
+        assertFalse(processed.contains("$SwitchMap$"));
+    }
+
+    @Test
+    void replacesNumericAnonymousClassFragments() {
+        String processed = new SourcePostProcessor().process(
+                "    private static final Runnable R = new 1();\n"
+                        + "    private static final Handle H = new LocalPoolHandle((Pool) null, (1) null);\n"
+                        + "    void add() {\n"
+                        + "        2 strategy = null;\n"
+                        + "    }\n");
+
+        assertTrue(processed.contains("R = null;"));
+        assertTrue(processed.contains("new LocalPoolHandle((Pool) null, null)"));
+        assertTrue(processed.contains("Object strategy = null;"));
+        assertFalse(processed.contains("new 1("));
+        assertFalse(processed.contains("(1) null"));
+    }
+
+    @Test
+    void balancesNullArgumentStatementsAfterAnonymousPlaceholderReplacement() {
+        String processed = new SourcePostProcessor().process(
+                "seedGeneratorThread.setUncaughtExceptionHandler(null;\n"
+                        + "Object ret = AccessController.doPrivileged((PrivilegedAction<Object>) null;\n");
+
+        assertTrue(processed.contains("setUncaughtExceptionHandler(null);"));
+        assertTrue(processed.contains("doPrivileged((PrivilegedAction<Object>) null);"));
+    }
 }
