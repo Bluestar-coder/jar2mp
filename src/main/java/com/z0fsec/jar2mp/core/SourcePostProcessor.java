@@ -36,6 +36,8 @@ public class SourcePostProcessor {
         processed = replaceUnavailableAnonymousInnerClasses(processed);
         processed = replaceNumericAnonymousClassFragments(processed);
         processed = balanceNullArgumentStatements(processed);
+        processed = castDoPrivilegedMethodReferences(processed);
+        processed = removeUnreachableBreakAfterInfiniteLoop(processed);
         return processed;
     }
 
@@ -191,6 +193,166 @@ public class SourcePostProcessor {
         }
         builder.append(line.substring(semicolon));
         return builder.toString();
+    }
+
+    private String castDoPrivilegedMethodReferences(String source) {
+        StringBuilder builder = new StringBuilder(source.length() + 32);
+        int searchIndex = 0;
+        while (true) {
+            int callIndex = source.indexOf("AccessController.doPrivileged(", searchIndex);
+            if (callIndex < 0) {
+                builder.append(source, searchIndex, source.length());
+                return builder.toString();
+            }
+
+            int lineStart = source.lastIndexOf('\n', callIndex) + 1;
+            String prefix = source.substring(lineStart, callIndex);
+            if (!prefix.trim().startsWith("return")) {
+                builder.append(source, searchIndex, callIndex + 1);
+                searchIndex = callIndex + 1;
+                continue;
+            }
+
+            int openParen = callIndex + "AccessController.doPrivileged".length();
+            int closeParen = findMatchingParen(source, openParen);
+            if (closeParen < 0) {
+                builder.append(source, searchIndex, callIndex + 1);
+                searchIndex = callIndex + 1;
+                continue;
+            }
+
+            int semicolon = closeParen + 1;
+            while (semicolon < source.length() && Character.isWhitespace(source.charAt(semicolon))) {
+                semicolon++;
+            }
+            if (semicolon >= source.length() || source.charAt(semicolon) != ';') {
+                builder.append(source, searchIndex, callIndex + 1);
+                searchIndex = callIndex + 1;
+                continue;
+            }
+
+            String returnType = findEnclosingMethodReturnType(source, callIndex);
+            if (returnType == null || "void".equals(returnType)) {
+                builder.append(source, searchIndex, semicolon + 1);
+            } else {
+                builder.append(source, searchIndex, openParen + 1);
+                builder.append("(PrivilegedAction<").append(returnType).append(">) ");
+                builder.append(source, openParen + 1, semicolon + 1);
+            }
+            searchIndex = semicolon + 1;
+        }
+    }
+
+    private String findEnclosingMethodReturnType(String source, int offset) {
+        int openBrace = source.lastIndexOf('{', offset);
+        if (openBrace < 0) {
+            return null;
+        }
+        int signatureStart = Math.max(0, source.lastIndexOf('\n', openBrace) + 1);
+        String signature = source.substring(signatureStart, openBrace).trim();
+        signature = signature.replaceAll("\\s+throws\\s+.+$", "").trim();
+        signature = signature.replaceAll("^(?:public|protected|private|static|final|synchronized|native|abstract|strictfp|default|\\s)+", "").trim();
+        int openParen = signature.indexOf('(');
+        if (openParen < 0) {
+            return null;
+        }
+        int lastSpace = signature.lastIndexOf(' ', openParen);
+        if (lastSpace < 0) {
+            return null;
+        }
+        String returnType = signature.substring(0, lastSpace).trim();
+        return returnType.isEmpty() ? null : returnType;
+    }
+
+    private int findMatchingParen(String source, int openParen) {
+        if (openParen < 0 || openParen >= source.length() || source.charAt(openParen) != '(') {
+            return -1;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean inChar = false;
+        boolean escaping = false;
+        for (int i = openParen; i < source.length(); i++) {
+            char current = source.charAt(i);
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (current == '\\') {
+                    escaping = true;
+                } else if (current == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inChar) {
+                if (escaping) {
+                    escaping = false;
+                } else if (current == '\\') {
+                    escaping = true;
+                } else if (current == '\'') {
+                    inChar = false;
+                }
+                continue;
+            }
+            if (current == '"') {
+                inString = true;
+                continue;
+            }
+            if (current == '\'') {
+                inChar = true;
+                continue;
+            }
+            if (current == '(') {
+                depth++;
+            } else if (current == ')') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+                if (depth < 0) {
+                    return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private String removeUnreachableBreakAfterInfiniteLoop(String source) {
+        String[] lines = source.split("\\n", -1);
+        StringBuilder builder = new StringBuilder(source.length());
+        for (int i = 0; i < lines.length; i++) {
+            if (isBreakAfterInfiniteLoop(lines, i)) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append('\n');
+            }
+            builder.append(lines[i]);
+        }
+        return builder.toString();
+    }
+
+    private boolean isBreakAfterInfiniteLoop(String[] lines, int index) {
+        if (index <= 0 || !"break;".equals(lines[index].trim())) {
+            return false;
+        }
+        int depth = 0;
+        boolean sawReturnOrThrow = false;
+        for (int i = index - 1; i >= 0; i--) {
+            String trimmed = lines[i].trim();
+            depth += count(trimmed, '}');
+            depth -= count(trimmed, '{');
+            if (trimmed.startsWith("return ") || trimmed.startsWith("throw ")) {
+                sawReturnOrThrow = true;
+            }
+            if (trimmed.startsWith("while (true)") && depth == 0) {
+                return sawReturnOrThrow;
+            }
+            if (depth < 0) {
+                return false;
+            }
+        }
+        return false;
     }
 
     private int count(String value, char target) {

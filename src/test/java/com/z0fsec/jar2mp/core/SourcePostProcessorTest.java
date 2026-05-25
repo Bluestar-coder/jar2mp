@@ -128,4 +128,55 @@ class SourcePostProcessorTest {
         assertTrue(processed.contains("setUncaughtExceptionHandler(null);"));
         assertTrue(processed.contains("doPrivileged((PrivilegedAction<Object>) null);"));
     }
+
+    @Test
+    void castsDoPrivilegedMethodReferenceToPrivilegedAction() {
+        String processed = new SourcePostProcessor().process(
+                "import java.security.AccessController;\n"
+                        + "import java.security.PrivilegedAction;\n"
+                        + "class Sample {\n"
+                        + "    ClassLoader get() {\n"
+                        + "        return AccessController.doPrivileged(Sample::directGetContextClassLoader);\n"
+                        + "    }\n"
+                        + "    static ClassLoader directGetContextClassLoader() { return null; }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(
+                "AccessController.doPrivileged((PrivilegedAction<ClassLoader>) Sample::directGetContextClassLoader)"));
+    }
+
+    @Test
+    void castsDoPrivilegedLambdaToPrivilegedActionUsingEnclosingReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "import java.security.AccessController;\n"
+                        + "import java.security.PrivilegedAction;\n"
+                        + "class Sample {\n"
+                        + "    private static ClassLoader getContextClassLoaderInternal() throws Exception {\n"
+                        + "        return AccessController.doPrivileged(() -> Sample.directGetContextClassLoader());\n"
+                        + "    }\n"
+                        + "    static ClassLoader directGetContextClassLoader() { return null; }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(
+                "AccessController.doPrivileged((PrivilegedAction<ClassLoader>) () -> Sample.directGetContextClassLoader())"));
+    }
+
+    @Test
+    void removesUnreachableBreakAfterInfiniteLoopThatAlreadyReturnsOrThrows() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    Object row() {\n"
+                        + "        while (true) {\n"
+                        + "            if (done()) {\n"
+                        + "                return new Object();\n"
+                        + "            }\n"
+                        + "            throw new RuntimeException();\n"
+                        + "        }\n"
+                        + "        break;\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertFalse(processed.contains("        break;\n"));
+        assertTrue(processed.contains("while (true)"));
+    }
 }
