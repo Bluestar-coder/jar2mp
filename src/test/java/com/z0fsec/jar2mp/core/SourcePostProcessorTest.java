@@ -93,14 +93,14 @@ class SourcePostProcessorTest {
     }
 
     @Test
-    void replacesSyntheticSwitchMapReferenceWithOrdinalSwitch() {
+    void preservesSyntheticSwitchMapReferenceInsteadOfChangingCaseSemantics() {
         String processed = new SourcePostProcessor().process(
                 "switch (1.$SwitchMap$com$example$Mode[value.getMode().ordinal()]) {\n"
                         + "    case 1: break;\n"
                         + "}\n");
 
-        assertTrue(processed.contains("switch (value.getMode().ordinal())"));
-        assertFalse(processed.contains("$SwitchMap$"));
+        assertTrue(processed.contains("1.$SwitchMap$com$example$Mode[value.getMode().ordinal()]"));
+        assertFalse(processed.contains("switch (value.getMode().ordinal())"));
     }
 
     @Test

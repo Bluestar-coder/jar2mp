@@ -13,8 +13,6 @@ public class SourcePostProcessor {
             "List\\s+(\\w+)\\s*=\\s*([^;]+);\\n(\\s*)for\\s*\\(([^:\\n]+?)\\s+(\\w+)\\s*:\\s*\\1\\)");
     private static final Pattern RAW_OPTIONAL_OR_ELSE_THROW = Pattern.compile(
             "Optional\\s+(\\w+)\\s*=\\s*([^;]+);\\n(\\s*)([\\w.$<>]+)\\s+(\\w+)\\s*=\\s*\\(([^)]+)\\)\\1\\.orElseThrow");
-    private static final Pattern SYNTHETIC_SWITCH_MAP = Pattern.compile(
-            "switch \\(\\d+\\.\\$SwitchMap\\$[\\w$]+\\[([^\\]]+\\.ordinal\\(\\))\\]\\)");
     private static final Pattern NUMERIC_ANONYMOUS_TYPE_DECLARATION = Pattern.compile(
             "(?m)^(\\s*)\\d+\\s+(\\w+)\\s*=");
     private static final Pattern NUMERIC_ANONYMOUS_CONSTRUCTOR = Pattern.compile("new\\s+\\d+\\([^;\\n]*\\)");
@@ -36,7 +34,6 @@ public class SourcePostProcessor {
         processed = addListElementTypes(processed);
         processed = addOptionalElementTypes(processed);
         processed = replaceUnavailableAnonymousInnerClasses(processed);
-        processed = replaceSyntheticSwitchMaps(processed);
         processed = replaceNumericAnonymousClassFragments(processed);
         processed = balanceNullArgumentStatements(processed);
         return processed;
@@ -147,17 +144,6 @@ public class SourcePostProcessor {
 
     private String replaceUnavailableAnonymousInnerClasses(String source) {
         return source.replace("new /* Unavailable Anonymous Inner Class!! */", "null");
-    }
-
-    private String replaceSyntheticSwitchMaps(String source) {
-        Matcher matcher = SYNTHETIC_SWITCH_MAP.matcher(source);
-        StringBuffer buffer = new StringBuffer();
-        while (matcher.find()) {
-            String ordinalExpression = matcher.group(1);
-            matcher.appendReplacement(buffer, Matcher.quoteReplacement("switch (" + ordinalExpression + ")"));
-        }
-        matcher.appendTail(buffer);
-        return buffer.toString();
     }
 
     private String replaceNumericAnonymousClassFragments(String source) {
