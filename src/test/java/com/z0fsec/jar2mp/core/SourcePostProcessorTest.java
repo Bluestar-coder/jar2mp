@@ -34,6 +34,25 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void stripsOnlyDecompilerHeaderAndPreservesPackageImports() {
+        String processed = new SourcePostProcessor().process(
+                "/*\n"
+                        + " * Decompiled with CFR.\n"
+                        + " */\n"
+                        + "package demo;\n\n"
+                        + "import java.util.List;\n\n"
+                        + "/*\n"
+                        + " * This class specifies class file version 49.0.\n"
+                        + " */\n"
+                        + "public class Sample { List<String> values; }\n",
+                "demo.Sample");
+
+        assertTrue(processed.startsWith("package demo;"));
+        assertTrue(processed.contains("import java.util.List;"));
+        assertTrue(processed.contains("public class Sample"));
+    }
+
+    @Test
     void removesImplicitImports() {
         String processed = new SourcePostProcessor().process(
                 "package demo;\n\n"
@@ -117,6 +136,54 @@ class SourcePostProcessorTest {
         assertTrue(processed.contains("Object strategy = null;"));
         assertFalse(processed.contains("new 1("));
         assertFalse(processed.contains("(1) null"));
+    }
+
+    @Test
+    void replacesCfrVoidTemporaryLocalDeclarations() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "  void run() {\n"
+                        + "    void var15_20;\n"
+                        + "    System.out.println(1);\n"
+                        + "  }\n"
+                        + "}\n",
+                "Sample");
+
+        assertFalse(processed.contains("void var15_20;"));
+        assertTrue(processed.contains("Object var15_20 = null;"));
+    }
+
+    @Test
+    void shortensQualifiedInnerClassInstanceCreation() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(Ansi ansi, Handler handler, Method method) {\n"
+                        + "        Ansi.Text text = ansi.new Ansi.Text(0);\n"
+                        + "        Handler.Binding binding = handler.new Handler.Binding(method);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("ansi.new Text(0);"));
+        assertTrue(processed.contains("handler.new Binding(method);"));
+        assertFalse(processed.contains("ansi.new Ansi.Text"));
+        assertFalse(processed.contains("handler.new Handler.Binding"));
+    }
+
+    @Test
+    void infersNumericGenericPlaceholderFromEnhancedForElementType() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run() {\n"
+                        + "        ArrayList<1> bookKeeping = new ArrayList<1>();\n"
+                        + "        bookKeeping.add(new Runnable() { public void run() {} });\n"
+                        + "        for (Runnable runnable : bookKeeping) {\n"
+                        + "            runnable.run();\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("ArrayList<Runnable> bookKeeping = new ArrayList<Runnable>();"));
+        assertFalse(processed.contains("ArrayList<1>"));
     }
 
     @Test

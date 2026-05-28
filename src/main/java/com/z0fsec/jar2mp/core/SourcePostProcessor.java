@@ -6,15 +6,21 @@ import java.util.regex.Pattern;
 public class SourcePostProcessor {
 
     private static final Pattern DECOMPILER_HEADER = Pattern.compile(
-            "\\A\\s*/\\*\\s*\\n(?: \\*.*\\n)*? \\*/\\s*", Pattern.DOTALL);
+            "\\A\\s*/\\*\\s*\\n(?:\\s*\\*[^\\n]*\\n)*\\s*\\*/\\s*");
     private static final Pattern PACKAGE_DECLARATION = Pattern.compile("(?m)^package\\s+([\\w.]+);\\s*$");
     private static final Pattern IMPORT_DECLARATION = Pattern.compile("(?m)^import\\s+([\\w.]+);\\s*\\n");
     private static final Pattern RAW_LIST_ENHANCED_FOR = Pattern.compile(
             "List\\s+(\\w+)\\s*=\\s*([^;]+);\\n(\\s*)for\\s*\\(([^:\\n]+?)\\s+(\\w+)\\s*:\\s*\\1\\)");
     private static final Pattern RAW_OPTIONAL_OR_ELSE_THROW = Pattern.compile(
             "Optional\\s+(\\w+)\\s*=\\s*([^;]+);\\n(\\s*)([\\w.$<>]+)\\s+(\\w+)\\s*=\\s*\\(([^)]+)\\)\\1\\.orElseThrow");
+    private static final Pattern NUMERIC_GENERIC_COLLECTION_DECLARATION = Pattern.compile(
+            "(?m)^(\\s*)([A-Za-z_$][\\w$]*)<\\d+>\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*new\\s+([A-Za-z_$][\\w$]*)<\\d+>\\(([^;\\n]*)\\);");
+    private static final Pattern QUALIFIED_INNER_INSTANCE_CREATION = Pattern.compile(
+            "\\.new\\s+(?:[A-Za-z_$][\\w$]*\\.)+([A-Za-z_$][\\w$]*)\\(");
     private static final Pattern NUMERIC_ANONYMOUS_TYPE_DECLARATION = Pattern.compile(
             "(?m)^(\\s*)\\d+\\s+(\\w+)\\s*=");
+    private static final Pattern CFR_VOID_TEMPORARY_LOCAL = Pattern.compile(
+            "(?m)^(\\s*)void\\s+([A-Za-z_$][\\w$]*)\\s*;");
     private static final Pattern NUMERIC_ANONYMOUS_CONSTRUCTOR = Pattern.compile("new\\s+\\d+\\([^;\\n]*\\)");
     private static final Pattern NUMERIC_ANONYMOUS_CAST = Pattern.compile("\\(\\d+\\)\\s*null");
 
@@ -33,8 +39,11 @@ public class SourcePostProcessor {
         processed = removeParameterArrayCasts(processed);
         processed = addListElementTypes(processed);
         processed = addOptionalElementTypes(processed);
+        processed = addNumericGenericElementTypes(processed);
         processed = replaceUnavailableAnonymousInnerClasses(processed);
         processed = replaceNumericAnonymousClassFragments(processed);
+        processed = shortenQualifiedInnerInstanceCreations(processed);
+        processed = replaceCfrVoidTemporaryLocals(processed);
         processed = balanceNullArgumentStatements(processed);
         processed = castDoPrivilegedMethodReferences(processed);
         processed = removeUnreachableBreakAfterInfiniteLoop(processed);
@@ -144,6 +153,37 @@ public class SourcePostProcessor {
         return buffer.toString();
     }
 
+    private String addNumericGenericElementTypes(String source) {
+        Matcher matcher = NUMERIC_GENERIC_COLLECTION_DECLARATION.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String variableName = matcher.group(3);
+            String elementType = findEnhancedForElementType(source, matcher.end(), variableName);
+            if (elementType == null) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group()));
+                continue;
+            }
+            String replacement = matcher.group(1) + matcher.group(2) + "<" + elementType + "> "
+                    + variableName + " = new " + matcher.group(4) + "<" + elementType + ">("
+                    + matcher.group(5) + ");";
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String findEnhancedForElementType(String source, int startOffset, String iterableName) {
+        Pattern pattern = Pattern.compile(
+                "for\\s*\\(\\s*([^:\\n]+?)\\s+[A-Za-z_$][\\w$]*\\s*:\\s*"
+                        + Pattern.quote(iterableName) + "\\s*\\)");
+        Matcher matcher = pattern.matcher(source);
+        if (!matcher.find(startOffset)) {
+            return null;
+        }
+        String elementType = matcher.group(1).trim();
+        return elementType.isEmpty() ? null : elementType;
+    }
+
     private String replaceUnavailableAnonymousInnerClasses(String source) {
         return source.replace("new /* Unavailable Anonymous Inner Class!! */", "null");
     }
@@ -157,6 +197,27 @@ public class SourcePostProcessor {
         while (matcher.find()) {
             matcher.appendReplacement(buffer, Matcher.quoteReplacement(
                     matcher.group(1) + "Object " + matcher.group(2) + " ="));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String shortenQualifiedInnerInstanceCreations(String source) {
+        Matcher matcher = QUALIFIED_INNER_INSTANCE_CREATION.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(".new " + matcher.group(1) + "("));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String replaceCfrVoidTemporaryLocals(String source) {
+        Matcher matcher = CFR_VOID_TEMPORARY_LOCAL.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "Object " + matcher.group(2) + " = null;"));
         }
         matcher.appendTail(buffer);
         return buffer.toString();
