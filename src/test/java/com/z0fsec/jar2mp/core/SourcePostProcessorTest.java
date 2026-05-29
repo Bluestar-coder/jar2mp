@@ -112,6 +112,15 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void replacesDuplicateAnonymousInnerClassPlaceholder() {
+        String processed = new SourcePostProcessor().process(
+                "worker.execute(new /* invalid duplicate definition of identical inner class */);\n");
+
+        assertTrue(processed.contains("worker.execute(null);"));
+        assertFalse(processed.contains("invalid duplicate definition"));
+    }
+
+    @Test
     void preservesSyntheticSwitchMapReferenceInsteadOfChangingCaseSemantics() {
         String processed = new SourcePostProcessor().process(
                 "switch (1.$SwitchMap$com$example$Mode[value.getMode().ordinal()]) {\n"
@@ -187,6 +196,21 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesWildcardBoundsFromLambdaParameterList() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(ExtendedAttributes<K, V> attributes) {\n"
+                        + "        attributes.forEach((? super K extendedAttributeKey, ? super V value) -> {\n"
+                        + "            use(extendedAttributeKey, value);\n"
+                        + "        });\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("attributes.forEach((extendedAttributeKey, value) -> {"));
+        assertFalse(processed.contains("? super"));
+    }
+
+    @Test
     void balancesNullArgumentStatementsAfterAnonymousPlaceholderReplacement() {
         String processed = new SourcePostProcessor().process(
                 "seedGeneratorThread.setUncaughtExceptionHandler(null;\n"
@@ -226,6 +250,43 @@ class SourcePostProcessorTest {
 
         assertTrue(processed.contains(
                 "AccessController.doPrivileged((PrivilegedAction<ClassLoader>) () -> Sample.directGetContextClassLoader())"));
+    }
+
+    @Test
+    void castsDoPrivilegedInsideIfBlockUsingEnclosingMethodReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "import java.nio.file.Files;\n"
+                        + "import java.nio.file.Path;\n"
+                        + "import java.security.AccessController;\n"
+                        + "import java.security.PrivilegedAction;\n"
+                        + "class Sample {\n"
+                        + "    static Boolean isSymbolicLink(Path file) {\n"
+                        + "        if (System.getSecurityManager() == null) {\n"
+                        + "            return Files.isSymbolicLink(file);\n"
+                        + "        }\n"
+                        + "        return AccessController.doPrivileged(() -> Files.isSymbolicLink(file));\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(
+                "AccessController.doPrivileged((PrivilegedAction<Boolean>) () -> Files.isSymbolicLink(file))"));
+        assertFalse(processed.contains("PrivilegedAction<if>"));
+    }
+
+    @Test
+    void castsDoPrivilegedInsideGenericMethodUsingGenericReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "import java.security.AccessController;\n"
+                        + "import java.security.PrivilegedAction;\n"
+                        + "class Sample {\n"
+                        + "    private static <T> T doPrivileged(PrivilegedAction<T> action) {\n"
+                        + "        return AccessController.doPrivileged(action);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(
+                "AccessController.doPrivileged((PrivilegedAction<T>) action)"));
+        assertFalse(processed.contains("PrivilegedAction<<T> T>"));
     }
 
     @Test

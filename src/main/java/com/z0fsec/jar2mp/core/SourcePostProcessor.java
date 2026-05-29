@@ -21,6 +21,8 @@ public class SourcePostProcessor {
             "(?m)^(\\s*)\\d+\\s+(\\w+)\\s*=");
     private static final Pattern CFR_VOID_TEMPORARY_LOCAL = Pattern.compile(
             "(?m)^(\\s*)void\\s+([A-Za-z_$][\\w$]*)\\s*;");
+    private static final Pattern WILDCARD_LAMBDA_PARAMETER = Pattern.compile(
+            "^\\?\\s+(?:super|extends)\\s+.+\\s+([A-Za-z_$][\\w$]*)$");
     private static final Pattern NUMERIC_ANONYMOUS_CONSTRUCTOR = Pattern.compile("new\\s+\\d+\\([^;\\n]*\\)");
     private static final Pattern NUMERIC_ANONYMOUS_CAST = Pattern.compile("\\(\\d+\\)\\s*null");
 
@@ -40,6 +42,7 @@ public class SourcePostProcessor {
         processed = addListElementTypes(processed);
         processed = addOptionalElementTypes(processed);
         processed = addNumericGenericElementTypes(processed);
+        processed = removeWildcardBoundsFromLambdaParameters(processed);
         processed = replaceUnavailableAnonymousInnerClasses(processed);
         processed = replaceNumericAnonymousClassFragments(processed);
         processed = shortenQualifiedInnerInstanceCreations(processed);
@@ -185,7 +188,51 @@ public class SourcePostProcessor {
     }
 
     private String replaceUnavailableAnonymousInnerClasses(String source) {
-        return source.replace("new /* Unavailable Anonymous Inner Class!! */", "null");
+        return source
+                .replace("new /* Unavailable Anonymous Inner Class!! */", "null")
+                .replace("new /* invalid duplicate definition of identical inner class */", "null");
+    }
+
+    private String removeWildcardBoundsFromLambdaParameters(String source) {
+        String[] lines = source.split("\\n", -1);
+        StringBuilder builder = new StringBuilder(source.length());
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) {
+                builder.append('\n');
+            }
+            builder.append(removeWildcardBoundsFromLambdaParameterLine(lines[i]));
+        }
+        return builder.toString();
+    }
+
+    private String removeWildcardBoundsFromLambdaParameterLine(String line) {
+        int arrow = line.indexOf("->");
+        if (arrow < 0 || line.indexOf('?') < 0) {
+            return line;
+        }
+        int openParen = line.lastIndexOf('(', arrow);
+        int closeParen = line.lastIndexOf(')', arrow);
+        if (openParen < 0 || closeParen < openParen) {
+            return line;
+        }
+
+        String[] params = line.substring(openParen + 1, closeParen).split(",");
+        StringBuilder replacement = new StringBuilder();
+        for (int i = 0; i < params.length; i++) {
+            if (i > 0) {
+                replacement.append(", ");
+            }
+            replacement.append(removeWildcardBoundFromLambdaParameter(params[i].trim()));
+        }
+        return line.substring(0, openParen + 1) + replacement + line.substring(closeParen);
+    }
+
+    private String removeWildcardBoundFromLambdaParameter(String parameter) {
+        Matcher matcher = WILDCARD_LAMBDA_PARAMETER.matcher(parameter);
+        if (matcher.matches()) {
+            return matcher.group(1);
+        }
+        return parameter;
     }
 
     private String replaceNumericAnonymousClassFragments(String source) {
@@ -305,16 +352,37 @@ public class SourcePostProcessor {
     }
 
     private String findEnclosingMethodReturnType(String source, int offset) {
-        int openBrace = source.lastIndexOf('{', offset);
-        if (openBrace < 0) {
-            return null;
+        int depth = 0;
+        for (int i = offset; i >= 0; i--) {
+            char current = source.charAt(i);
+            if (current == '}') {
+                depth++;
+            } else if (current == '{') {
+                if (depth > 0) {
+                    depth--;
+                    continue;
+                }
+                String returnType = extractMethodReturnType(source, i);
+                if (returnType != null) {
+                    return returnType;
+                }
+            }
         }
+        return null;
+    }
+
+    private String extractMethodReturnType(String source, int openBrace) {
         int signatureStart = Math.max(0, source.lastIndexOf('\n', openBrace) + 1);
         String signature = source.substring(signatureStart, openBrace).trim();
         signature = signature.replaceAll("\\s+throws\\s+.+$", "").trim();
         signature = signature.replaceAll("^(?:public|protected|private|static|final|synchronized|native|abstract|strictfp|default|\\s)+", "").trim();
+        signature = signature.replaceAll("^<[^>]+>\\s+", "").trim();
         int openParen = signature.indexOf('(');
         if (openParen < 0) {
+            return null;
+        }
+        String beforeParen = signature.substring(0, openParen).trim();
+        if (isControlBlockKeyword(beforeParen)) {
             return null;
         }
         int lastSpace = signature.lastIndexOf(' ', openParen);
@@ -323,6 +391,16 @@ public class SourcePostProcessor {
         }
         String returnType = signature.substring(0, lastSpace).trim();
         return returnType.isEmpty() ? null : returnType;
+    }
+
+    private boolean isControlBlockKeyword(String beforeParen) {
+        return "if".equals(beforeParen)
+                || "for".equals(beforeParen)
+                || "while".equals(beforeParen)
+                || "switch".equals(beforeParen)
+                || "catch".equals(beforeParen)
+                || "try".equals(beforeParen)
+                || "synchronized".equals(beforeParen);
     }
 
     private int findMatchingParen(String source, int openParen) {
