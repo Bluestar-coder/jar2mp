@@ -199,6 +199,7 @@ public class SourcePostProcessor {
         processed = restorePageInfoLocalsFromPageDataReturnTypes(processed);
         processed = restoreListLocalsFromListReturnTypes(processed);
         processed = restoreListTypesFromStreamMapResults(processed);
+        processed = restoreSetTypesFromStreamMapResults(processed);
         processed = restoreStreamCollectListTypes(processed);
         processed = restoreUidSideEffectListTypes(processed);
         processed = restoreRawListTypesFromElementUsage(processed);
@@ -1233,6 +1234,38 @@ public class SourcePostProcessor {
         return String.join("\n", lines);
     }
 
+    private String restoreSetTypesFromStreamMapResults(String source) {
+        String[] lines = source.split("\\n", -1);
+        Pattern sameLineSet = Pattern.compile("^(\\s*)Set\\s*<\\s*Object\\s*>\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*\\.stream\\s*\\([^;\\n]*\\.map\\(\\s*"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::([A-Za-z_$][\\w$]*)"
+                + "[^;\\n]*\\.collect\\(\\s*Collectors\\.toSet\\(\\)\\s*\\)\\s*;)");
+        Pattern assignment = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "[^;\\n]*\\.stream\\s*\\([^;\\n]*\\.map\\(\\s*"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::([A-Za-z_$][\\w$]*)"
+                + "[^;\\n]*\\.collect\\(\\s*Collectors\\.toSet\\(\\)\\s*\\)");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher sameLineMatcher = sameLineSet.matcher(lines[i]);
+            if (sameLineMatcher.find()) {
+                String elementType = inferStreamMapResultType(sameLineMatcher.group(4), sameLineMatcher.group(5));
+                if (elementType != null) {
+                    lines[i] = sameLineMatcher.replaceFirst(Matcher.quoteReplacement(
+                            sameLineMatcher.group(1) + "Set<" + elementType + "> "
+                                    + sameLineMatcher.group(2) + " = " + sameLineMatcher.group(3)));
+                }
+            }
+
+            Matcher assignmentMatcher = assignment.matcher(lines[i]);
+            while (assignmentMatcher.find()) {
+                String elementType = inferStreamMapResultType(assignmentMatcher.group(2), assignmentMatcher.group(3));
+                if (elementType != null) {
+                    typePreviousSetDeclaration(lines, i, assignmentMatcher.group(1), elementType);
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
     private String restoreStreamCollectListTypes(String source) {
         String[] lines = source.split("\\n", -1);
         Map<String, String> listElementTypes = new LinkedHashMap<>();
@@ -1324,6 +1357,23 @@ public class SourcePostProcessor {
                 String suffix = matcher.group(1).equals(";") ? ";" : " =";
                 lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
                         "List<" + elementType + "> " + listName + suffix));
+                return;
+            }
+        }
+    }
+
+    private void typePreviousSetDeclaration(String[] lines, int currentIndex, String setName, String elementType) {
+        Pattern declaration = Pattern.compile("\\bSet\\s*<\\s*Object\\s*>\\s+"
+                + Pattern.quote(setName) + "\\s*([;=])");
+        for (int i = currentIndex; i >= 0; i--) {
+            if (i != currentIndex && looksLikeMethodDeclaration(lines[i])) {
+                return;
+            }
+            Matcher matcher = declaration.matcher(lines[i]);
+            if (matcher.find()) {
+                String suffix = matcher.group(1).equals(";") ? ";" : " =";
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "Set<" + elementType + "> " + setName + suffix));
                 return;
             }
         }

@@ -395,6 +395,29 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresSetElementTypeFromLaterStreamMethodReferenceAssignment() {
+        String processed = new SourcePostProcessor().process(
+                "Set<Object> exclusivePacketUids = new HashSet();\n"
+                        + "exclusivePacketUids = banExclusivePacketGroupList.stream()"
+                        + ".map(BanGroupResDTO::getUid).collect(Collectors.toSet());\n"
+                        + "BanDTO needBanData = this.getNeedBanData(banGroup, uids, exclusivePacketUids, groupIds);\n");
+
+        assertTrue(processed.contains("Set<Long> exclusivePacketUids = new HashSet();"));
+    }
+
+    @Test
+    void leavesRawSetStreamCollectionUntypedWhenOnlyGetterNameIsAvailable() {
+        String processed = new SourcePostProcessor().process(
+                "Set sourceRedPacketIds = list.stream().map(RedPacket::getId).collect(Collectors.toSet());\n"
+                        + "this.userCoinRecordService.lambdaUpdate().in(UserCoinRecord::getTargetId, "
+                        + "sourceRedPacketIds).update();\n");
+
+        assertTrue(processed.contains("Set sourceRedPacketIds = list.stream().map(RedPacket::getId)"
+                + ".collect(Collectors.toSet());"));
+        assertFalse(processed.contains("Set<Long> sourceRedPacketIds"));
+    }
+
+    @Test
     void doesNotInferRawListElementTypeFromLaterMethodWithSameVariableName() {
         String processed = new SourcePostProcessor().process(
                 "public boolean removeDuplicateReg() {\n"
