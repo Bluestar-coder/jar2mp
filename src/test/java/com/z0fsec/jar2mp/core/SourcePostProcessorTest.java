@@ -109,6 +109,44 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresLambdaUpdateWrapperEntityTypeFromMethodReferences() {
+        String processed = new SourcePostProcessor().process(
+                "this.sysUserMapper.update(null, (Wrapper)((LambdaUpdateWrapper)new LambdaUpdateWrapper()"
+                        + ".eq(SysUser::getUserId, req.getUserId())).set(SysUser::getDeviceLimitEnabled, "
+                        + "req.getDeviceLimitEnabled()));\n");
+
+        assertTrue(processed.contains("(LambdaUpdateWrapper<SysUser>)new LambdaUpdateWrapper<SysUser>()"));
+    }
+
+    @Test
+    void restoresLambdaUpdateChainWrapperEntityTypeFromMethodReferences() {
+        String processed = new SourcePostProcessor().process(
+                "((LambdaUpdateChainWrapper)((LambdaUpdateChainWrapper)this.userCoinRecordService.lambdaUpdate()"
+                        + ".set(UserCoinRecord::getUid, financeUid)).in(UserCoinRecord::getTargetId, "
+                        + "sourceRedPacketIds)).update();\n");
+
+        assertTrue(processed.contains("(LambdaUpdateChainWrapper<UserCoinRecord>)this.userCoinRecordService"
+                + ".lambdaUpdate()"));
+        assertFalse(processed.contains("(LambdaUpdateChainWrapper)this.userCoinRecordService.lambdaUpdate()"));
+    }
+
+    @Test
+    void unwrapsSingleElementRedisSetOperationArrays() {
+        String processed = new SourcePostProcessor().process(
+                "userTemplate.opsForSet().add(\"user:change:device:switch\", "
+                        + "(Object[])new String[]{UserChangeDeviceSwitchType.getCode((String)parentCode).getCode()});\n"
+                        + "userTemplate.opsForSet().remove(\"user:change:device:switch\", "
+                        + "new Object[]{UserChangeDeviceSwitchType.getCode((String)parentCode).getCode()});\n");
+
+        assertTrue(processed.contains("opsForSet().add(\"user:change:device:switch\", "
+                + "UserChangeDeviceSwitchType.getCode((String)parentCode).getCode())"));
+        assertTrue(processed.contains("opsForSet().remove(\"user:change:device:switch\", "
+                + "UserChangeDeviceSwitchType.getCode((String)parentCode).getCode())"));
+        assertFalse(processed.contains("new String[]"));
+        assertFalse(processed.contains("new Object[]"));
+    }
+
+    @Test
     void scopesLambdaQueryWrapperTypesForRepeatedVariableNames() {
         String processed = new SourcePostProcessor().process(
                 "while (true) {\n"

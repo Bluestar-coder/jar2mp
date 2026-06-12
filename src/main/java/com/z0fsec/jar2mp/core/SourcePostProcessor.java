@@ -101,6 +101,7 @@ public class SourcePostProcessor {
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
         processed = removeParameterArrayCasts(processed);
+        processed = unwrapSingleElementRedisSetOperationArrays(processed);
         processed = restoreStringSplitArrayTypes(processed);
         processed = removeGuavaListFactoryCasts(processed);
         processed = restoreStringListLocalsFromFactoryAssignments(processed);
@@ -111,7 +112,9 @@ public class SourcePostProcessor {
         processed = addNumericGenericElementTypes(processed);
         processed = addObjectElementTypesToRawListCasts(processed);
         processed = restoreLambdaQueryWrapperEntityTypes(processed);
+        processed = restoreLambdaUpdateWrapperEntityTypes(processed);
         processed = restoreLambdaQueryChainWrapperEntityTypes(processed);
+        processed = restoreLambdaUpdateChainWrapperEntityTypes(processed);
         processed = restoreLambdaQueryChainListElementTypes(processed);
         processed = restorePageInfoRowListElementTypes(processed);
         processed = restoreLocalTypesFromGenericMethodReturns(processed);
@@ -202,10 +205,42 @@ public class SourcePostProcessor {
         return String.join("\n", lines);
     }
 
+    private String restoreLambdaUpdateWrapperEntityTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (!line.contains("LambdaUpdateWrapper") || !line.contains("::")) {
+                continue;
+            }
+            String entityType = firstMethodReferenceType(line, "LambdaUpdateWrapper");
+            if (entityType == null) {
+                continue;
+            }
+            String typedWrapper = "LambdaUpdateWrapper<" + entityType + ">";
+            line = line.replace("new LambdaUpdateWrapper()", "new " + typedWrapper + "()");
+            line = line.replace("(LambdaUpdateWrapper)", "(" + typedWrapper + ")");
+            lines[i] = line;
+        }
+        return String.join("\n", lines);
+    }
+
     private String firstMethodReferenceType(String line) {
         int wrapperStart = line.indexOf("new LambdaQueryWrapper");
         if (wrapperStart < 0) {
             wrapperStart = line.indexOf("(LambdaQueryWrapper");
+        }
+        String search = wrapperStart >= 0 ? line.substring(wrapperStart) : line;
+        Matcher matcher = METHOD_REFERENCE_TYPE.matcher(search);
+        if (!matcher.find()) {
+            return null;
+        }
+        return matcher.group(1);
+    }
+
+    private String firstMethodReferenceType(String line, String wrapperName) {
+        int wrapperStart = line.indexOf("new " + wrapperName);
+        if (wrapperStart < 0) {
+            wrapperStart = line.indexOf("(" + wrapperName);
         }
         String search = wrapperStart >= 0 ? line.substring(wrapperStart) : line;
         Matcher matcher = METHOD_REFERENCE_TYPE.matcher(search);
@@ -345,10 +380,40 @@ public class SourcePostProcessor {
         return String.join("\n", lines);
     }
 
+    private String restoreLambdaUpdateChainWrapperEntityTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (!line.contains("LambdaUpdateChainWrapper") || !line.contains("::")) {
+                continue;
+            }
+            String entityType = firstLambdaUpdateChainWrapperMethodReferenceType(line);
+            if (entityType == null) {
+                continue;
+            }
+            line = line.replace("(LambdaUpdateChainWrapper)", "(LambdaUpdateChainWrapper<" + entityType + ">)");
+            lines[i] = line;
+        }
+        return String.join("\n", lines);
+    }
+
     private String firstLambdaQueryChainWrapperMethodReferenceType(String line) {
         int wrapperStart = line.indexOf("(LambdaQueryChainWrapper");
         if (wrapperStart < 0) {
             wrapperStart = line.indexOf(".lambdaQuery()");
+        }
+        String search = wrapperStart >= 0 ? line.substring(wrapperStart) : line;
+        Matcher matcher = METHOD_REFERENCE_TYPE.matcher(search);
+        if (!matcher.find()) {
+            return null;
+        }
+        return matcher.group(1);
+    }
+
+    private String firstLambdaUpdateChainWrapperMethodReferenceType(String line) {
+        int wrapperStart = line.indexOf("(LambdaUpdateChainWrapper");
+        if (wrapperStart < 0) {
+            wrapperStart = line.indexOf(".lambdaUpdate()");
         }
         String search = wrapperStart >= 0 ? line.substring(wrapperStart) : line;
         Matcher matcher = METHOD_REFERENCE_TYPE.matcher(search);
@@ -839,6 +904,20 @@ public class SourcePostProcessor {
             if (Pattern.compile("String\\[\\]\\s+" + Pattern.quote(variableName) + "\\b").matcher(source).find()) {
                 matcher.appendReplacement(buffer, Matcher.quoteReplacement(variableName));
             }
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String unwrapSingleElementRedisSetOperationArrays(String source) {
+        Pattern singleElementSetOperationArray = Pattern.compile("(opsForSet\\(\\)\\.(?:add|remove)\\s*"
+                + "\\([^\\n;]*?,\\s*)(?:\\(Object\\[\\]\\)\\s*)?new\\s+(?:String|Object)\\[\\]\\s*"
+                + "\\{\\s*([^{};]+?)\\s*}\\s*\\)");
+        Matcher matcher = singleElementSetOperationArray.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + matcher.group(2).trim() + ")"));
         }
         matcher.appendTail(buffer);
         return buffer.toString();
