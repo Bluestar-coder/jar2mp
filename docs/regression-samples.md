@@ -110,3 +110,37 @@ The script writes:
 - restored jar2mp projects under `target/adhoc-github-release-assets/restored-current/`
 
 Set `STRICT_CACHED_ADHOC_ASSETS=0` to keep the script exploratory when some cached assets are missing or expected to fail. By default, any non-`PASS` sample exits non-zero.
+
+## OTC Admin Local Sample
+
+`scripts/regression/run-otc-admin-regression.sh` replays the local OTC admin sample used for the current byte-level restoration work. The default sample is `/Users/jackma/ProjectCode/68集团/OTC/otc-admin.jar`, and the default reference project is `/Users/jackma/ProjectCode/68集团/OTC/OTC-Admin`.
+
+Run:
+
+```bash
+./scripts/regression/run-otc-admin-regression.sh
+```
+
+Optional environment:
+
+```bash
+OTC_ADMIN_JAR=/path/to/otc-admin.jar \
+OTC_ADMIN_REFERENCE_PROJECT=/path/to/OTC-Admin \
+OTC_ADMIN_WORK_DIR=target/otc-admin-sample \
+./scripts/regression/run-otc-admin-regression.sh
+```
+
+The script writes:
+
+- `target/otc-admin-sample/report/otc-admin-summary.md`
+- `target/otc-admin-sample/report/otc-admin-summary.csv`
+- `target/otc-admin-sample/report/package-record.cli.log`
+- `target/otc-admin-sample/report/byte-exact.cli.log`
+- restored jar2mp projects under `target/otc-admin-sample/restored/`
+
+The script runs two independent byte-level gates:
+
+- `--restore-package-records --verify-build` keeps the ordinary generated Maven project shape, then requires guarded package-record restoration to produce a byte-identical final package.
+- `--byte-exact-package --verify-build` runs the strict package-restoration path and requires the restored final package to be byte-identical to the original sample.
+
+The script exits non-zero unless both modes report `BUILD SUCCESS`, `Failure type: NONE`, `exact_match=true`, and a rebuilt SHA-256 equal to the original JAR SHA-256. The summary also records generated/reference Java file counts and current decompile-fallback counts, but those counts are reported as progress evidence rather than byte-exact gates.

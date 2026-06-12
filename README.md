@@ -204,6 +204,14 @@ Options:
 
 汇总报告写入 `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.md` 和 `target/adhoc-github-release-assets/report-current/adhoc-github-release-assets-summary.csv`。固定缓存样本、PASS 规则和输出目录见 `docs/regression-samples.md`。
 
+针对本地 OTC admin 样本，可以运行聚焦回归脚本。默认样本为 `/Users/jackma/ProjectCode/68集团/OTC/otc-admin.jar`，默认参考项目为 `/Users/jackma/ProjectCode/68集团/OTC/OTC-Admin`：
+
+```bash
+./scripts/regression/run-otc-admin-regression.sh
+```
+
+脚本会分别运行 `--restore-package-records --verify-build` 和 `--byte-exact-package --verify-build`，并要求两条链路的 Maven 验证为 `BUILD SUCCESS`、最终 package `exact_match=true`、重建 SHA-256 与原始 JAR 一致。汇总报告写入 `target/otc-admin-sample/report/otc-admin-summary.md` 和 `target/otc-admin-sample/report/otc-admin-summary.csv`。可用 `OTC_ADMIN_JAR`、`OTC_ADMIN_REFERENCE_PROJECT`、`OTC_ADMIN_WORK_DIR`、`JAR2MP_JAR`、`BUILD_JAR2MP`、`MVN`、`JAVA_CMD` 覆盖默认值。
+
 能还原的主要内容：
 
 - Java 源码、资源文件、WEB-INF 结构、常见配置、Maven 坐标、原始 class bytes、原始 `META-INF/maven/**` metadata、原始 manifest、build-info/SBOM 等可保留构建元数据
