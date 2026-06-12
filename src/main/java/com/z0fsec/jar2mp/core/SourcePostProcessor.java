@@ -72,6 +72,9 @@ public class SourcePostProcessor {
                     + "[A-Za-z_$][\\w$]*\\s*\\(");
     private static final Pattern LIST_METHOD_DECLARATION = Pattern.compile(
             "\\bList\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s+[A-Za-z_$][\\w$]*\\s*\\(");
+    private static final Pattern WRAPPED_LIST_METHOD_DECLARATION = Pattern.compile(
+            "\\b[A-Za-z_$][\\w$.]*\\s*<\\s*List\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s*>\\s+"
+                    + "[A-Za-z_$][\\w$]*\\s*\\(");
     private static final Pattern TYPED_LIST_DECLARATION = Pattern.compile(
             "\\bList\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s+([A-Za-z_$][\\w$]*)\\b");
     private static final Pattern RAW_LIST_DECLARATION_WITH_INITIALIZER = Pattern.compile(
@@ -120,6 +123,7 @@ public class SourcePostProcessor {
         processed = restoreLocalTypesFromGenericMethodReturns(processed);
         processed = restorePageInfoLocalsFromPageDataReturnTypes(processed);
         processed = restoreListLocalsFromListReturnTypes(processed);
+        processed = restoreNestedListPartitionTypes(processed);
         processed = restoreGenericListMethodTypeVariableLocals(processed);
         processed = restorePageDataLocalsFromResultReturnTypes(processed);
         processed = restoreRawListElementTypesFromStreamMethodReferences(processed);
@@ -547,21 +551,32 @@ public class SourcePostProcessor {
             if (methodMatcher.find()) {
                 currentElementType = methodMatcher.group(1);
                 methodStart = i;
-            } else if (looksLikeMethodDeclaration(line)) {
-                currentElementType = null;
-                methodStart = -1;
+            } else {
+                Matcher wrappedMethodMatcher = WRAPPED_LIST_METHOD_DECLARATION.matcher(line);
+                if (wrappedMethodMatcher.find()) {
+                    currentElementType = wrappedMethodMatcher.group(1);
+                    methodStart = i;
+                } else if (looksLikeMethodDeclaration(line)) {
+                    currentElementType = null;
+                    methodStart = -1;
+                }
             }
             if (currentElementType == null || methodStart < 0) {
                 continue;
             }
             Matcher listMatcher = Pattern.compile("\\bList\\s+([A-Za-z_$][\\w$]*)\\s*=")
                     .matcher(line);
-            if (listMatcher.find() && isReturnedBeforeNextMethod(lines, i + 1, listMatcher.group(1))) {
+            if (listMatcher.find() && isListReturnedBeforeNextMethod(lines, i + 1, listMatcher.group(1))) {
                 lines[i] = listMatcher.replaceFirst(Matcher.quoteReplacement(
                         "List<" + currentElementType + "> " + listMatcher.group(1) + " ="));
             }
         }
         return String.join("\n", lines);
+    }
+
+    private boolean isListReturnedBeforeNextMethod(String[] lines, int start, String localName) {
+        return isReturnedBeforeNextMethod(lines, start, localName)
+                || isPassedToReturnCallBeforeNextMethod(lines, start, localName);
     }
 
     private boolean isReturnedBeforeNextMethod(String[] lines, int start, String localName) {
@@ -575,6 +590,74 @@ public class SourcePostProcessor {
             }
         }
         return false;
+    }
+
+    private boolean isPassedToReturnCallBeforeNextMethod(String[] lines, int start, String localName) {
+        Pattern returned = Pattern.compile("\\breturn\\s+[^;\\n]+\\(\\s*" + Pattern.quote(localName) + "\\s*\\)\\s*;");
+        for (int i = start; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                return false;
+            }
+            if (returned.matcher(lines[i]).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String restoreNestedListPartitionTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> listElementTypes = new LinkedHashMap<>();
+        Map<String, String> partitionElementTypes = new LinkedHashMap<>();
+        Pattern partitionAssignment = Pattern.compile("^(\\s*)List(?:\\s*<\\s*List\\s*>)?\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "((?:com\\.google\\.common\\.collect\\.)?Lists\\.partition\\(\\s*)"
+                + "(?:\\(List\\)\\s*)?([A-Za-z_$][\\w$]*)\\s*,\\s*(?:\\(int\\)\\s*)?([^;\\n]+)\\);");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (looksLikeMethodDeclaration(line)) {
+                listElementTypes.clear();
+                partitionElementTypes.clear();
+            }
+
+            Matcher typedListMatcher = TYPED_LIST_DECLARATION.matcher(line);
+            while (typedListMatcher.find()) {
+                listElementTypes.put(typedListMatcher.group(2), typedListMatcher.group(1));
+            }
+
+            Matcher partitionMatcher = partitionAssignment.matcher(line);
+            if (partitionMatcher.find()) {
+                String partitionName = partitionMatcher.group(2);
+                String sourceListName = partitionMatcher.group(4);
+                String elementType = listElementTypes.get(sourceListName);
+                if (elementType != null) {
+                    partitionElementTypes.put(partitionName, elementType);
+                    line = partitionMatcher.replaceFirst(Matcher.quoteReplacement(
+                            partitionMatcher.group(1) + "List<List<" + elementType + ">> " + partitionName + " = "
+                                    + partitionMatcher.group(3) + sourceListName + ", "
+                                    + partitionMatcher.group(5).trim() + ");"));
+                }
+            }
+
+            for (Map.Entry<String, String> entry : partitionElementTypes.entrySet()) {
+                line = typeNestedListEnhancedFor(line, entry.getKey(), entry.getValue());
+            }
+            lines[i] = line;
+        }
+        return String.join("\n", lines);
+    }
+
+    private String typeNestedListEnhancedFor(String line, String partitionName, String elementType) {
+        Pattern enhancedFor = Pattern.compile("\\bfor\\s*\\(\\s*List\\s+([A-Za-z_$][\\w$]*)\\s*:\\s*"
+                + Pattern.quote(partitionName) + "\\s*\\)");
+        Matcher matcher = enhancedFor.matcher(line);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    "for (List<" + elementType + "> " + matcher.group(1) + " : " + partitionName + ")"));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
     }
 
     private String restoreGenericListMethodTypeVariableLocals(String source) {
@@ -693,10 +776,18 @@ public class SourcePostProcessor {
                 + "([A-Za-z_$][\\w$]*)");
         String methodRemainder = source.substring(start, nextMethodStart(source, start));
         Matcher matcher = streamMethodReference.matcher(methodRemainder);
-        if (!matcher.find() || !isBeanAccessorMethodReference(matcher.group(2))) {
-            return null;
+        if (matcher.find() && isBeanAccessorMethodReference(matcher.group(2))) {
+            return matcher.group(1);
         }
-        return matcher.group(1);
+
+        Pattern collectorsToMapMethodReference = Pattern.compile("\\b" + Pattern.quote(listName)
+                + "\\.stream\\(\\)\\.collect\\(\\s*Collectors\\.toMap\\(\\s*"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::([A-Za-z_$][\\w$]*)");
+        Matcher toMapMatcher = collectorsToMapMethodReference.matcher(methodRemainder);
+        if (toMapMatcher.find() && isBeanAccessorMethodReference(toMapMatcher.group(2))) {
+            return toMapMatcher.group(1);
+        }
+        return null;
     }
 
     private int nextMethodStart(String source, int start) {

@@ -373,6 +373,43 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresListLocalTypeFromWrappedListMethodReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "public ResultA<List<BatchAddAccDTO>> onMessage(RoleUserCreateReq req) {\n"
+                        + "    List list = this.userService.generateAccount(req);\n"
+                        + "    list.stream().map(e -> e.getUid()).toList();\n"
+                        + "    return ListenerResultUtil.getSuc(list);\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<BatchAddAccDTO> list = this.userService.generateAccount(req);"));
+    }
+
+    @Test
+    void restoresNestedListPartitionTypesFromSourceListElementType() {
+        String processed = new SourcePostProcessor().process(
+                "List<Long> sendUidList = this.getSendUidList(commonNotice);\n"
+                        + "List listList = com.google.common.collect.Lists.partition((List)sendUidList, (int)batchSize);\n"
+                        + "for (List uidList : listList) {\n"
+                        + "    uidList.forEach(uid -> this.userService.getUserLanguage(template, uid));\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<List<Long>> listList = "
+                + "com.google.common.collect.Lists.partition(sendUidList, batchSize);"));
+        assertTrue(processed.contains("for (List<Long> uidList : listList)"));
+    }
+
+    @Test
+    void restoresRawListElementTypeFromCollectorsToMapMethodReference() {
+        String processed = new SourcePostProcessor().process(
+                "List<Long> uidList = messages.stream().map(GroupMemberLimitMsgResp::getUid).toList();\n"
+                        + "List userList = this.userService.listByIds(uidList);\n"
+                        + "Map<Long, Integer> lastChannelByUid = userList.stream()"
+                        + ".collect(Collectors.toMap(User::getUid, User::getLastChannel));\n");
+
+        assertTrue(processed.contains("List<User> userList = this.userService.listByIds(uidList);"));
+    }
+
+    @Test
     void restoresGenericListMethodTypeVariableLocals() {
         String processed = new SourcePostProcessor().process(
                 "public static <S, T> List<T> copyListProperties(List<S> sources, Supplier<T> target) {\n"
