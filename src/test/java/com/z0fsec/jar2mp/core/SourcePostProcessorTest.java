@@ -1630,6 +1630,23 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresClassAnnotationListFieldInitializerFromRawClassArray() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import java.lang.annotation.Annotation;\n"
+                        + "import java.util.List;\n\n"
+                        + "class Sample {\n"
+                        + "    public static final List<Class<? extends Annotation>> CRYPT_ANNOTATIONS = "
+                        + "Lists.newArrayList(new Class[]{TableId.class, RelyCrypt.class});\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("import java.util.Arrays;"));
+        assertTrue(processed.contains("List<Class<? extends Annotation>> CRYPT_ANNOTATIONS = "
+                + "Arrays.asList(TableId.class, RelyCrypt.class);"));
+        assertFalse(processed.contains("new Class[]{"));
+    }
+
+    @Test
     void castsReflectionFieldGetterResultToGenericFunctionType() {
         String processed = new SourcePostProcessor().process(
                 "public static <T, K> Function<T, K> createFieldFunction(String fieldName, Class<T> clazz) {\n"

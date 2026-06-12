@@ -980,12 +980,19 @@ public class SourcePostProcessor {
         processed = processed.replaceAll("\\bArrayList\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
                         + "Lists\\.newArrayList\\(\\s*new\\s+Class\\[\\]\\s*\\{\\s*([^}]*)\\s*}\\s*\\);",
                 "ArrayList<Class<? extends Annotation>> $1 = Lists.newArrayList($2);");
+        processed = processed.replaceAll("\\b(List\\s*<\\s*Class\\s*<\\s*\\?\\s*extends\\s*Annotation\\s*>\\s*>\\s+"
+                        + "[A-Za-z_$][\\w$]*\\s*=\\s*)Lists\\.newArrayList\\(\\s*new\\s+Class\\[\\]\\s*"
+                        + "\\{\\s*([^}]*)\\s*}\\s*\\);",
+                "$1Arrays.asList($2);");
         processed = restoreTimeSplitterPairTypes(processed);
         if (processed.contains("List<Field> ")) {
             processed = ensureImport(processed, "java.lang.reflect.Field");
         }
         if (processed.contains("Class<? extends Annotation>")) {
             processed = ensureImport(processed, "java.lang.annotation.Annotation");
+        }
+        if (processed.contains("Arrays.asList(")) {
+            processed = ensureImport(processed, "java.util.Arrays");
         }
         return processed;
     }
