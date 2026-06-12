@@ -410,6 +410,60 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresRawListElementTypeFromLaterEnhancedForInSameMethod() {
+        String processed = new SourcePostProcessor().process(
+                "private void checkRiskDuplicateConf(GroupMsgRiskConfDTO riskConfig) {\n"
+                        + "    List riskConfigs = riskConfig.getRiskConfigs();\n"
+                        + "    if (CollUtil.isNotEmpty((Collection)riskConfigs)) {\n"
+                        + "        for (GroupRiskConfDTO config : riskConfigs) {}\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<GroupRiskConfDTO> riskConfigs = riskConfig.getRiskConfigs();"));
+    }
+
+    @Test
+    void restoresRawListDeclarationTypeFromLaterEnhancedForAssignment() {
+        String processed = new SourcePostProcessor().process(
+                "private void checkRiskDuplicateConf(GroupMsgRiskConfDTO riskConfig) {\n"
+                        + "    List numRiskConfigs;\n"
+                        + "    if (CollUtil.isNotEmpty((Collection)(numRiskConfigs = riskConfig.getRiskLimitNumConfigs()))) {\n"
+                        + "        for (GroupRiskConfDTO dto : numRiskConfigs) {}\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<GroupRiskConfDTO> numRiskConfigs;"));
+    }
+
+    @Test
+    void restoresStringLocalFromToStringAssignment() {
+        String processed = new SourcePostProcessor().process(
+                "private String getRequestUrl(HttpServletRequest request) {\n"
+                        + "    Object url = request.getRequestURL().toString();\n"
+                        + "    return url;\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("String url = request.getRequestURL().toString();"));
+    }
+
+    @Test
+    void restoresIdentifyMapValueTypeFromKnownLookupMethod() {
+        String processed = new SourcePostProcessor().process(
+                "Map userMap = this.userService.getIdentifyMap(uids);\n"
+                        + "respList.forEach(entity -> entity.setIdentify(userMap.getOrDefault(entity.getUid(), \"\")));\n");
+
+        assertTrue(processed.contains("Map<Long, String> userMap = this.userService.getIdentifyMap(uids);"));
+    }
+
+    @Test
+    void restoresMapValueTypeFromHashMapInitializer() {
+        String processed = new SourcePostProcessor().process(
+                "Map<Long, Object> groupNameMap = new HashMap<Long, Groups>();\n");
+
+        assertTrue(processed.contains("Map<Long, Groups> groupNameMap = new HashMap<Long, Groups>();"));
+    }
+
+    @Test
     void restoresGenericListMethodTypeVariableLocals() {
         String processed = new SourcePostProcessor().process(
                 "public static <S, T> List<T> copyListProperties(List<S> sources, Supplier<T> target) {\n"

@@ -104,6 +104,7 @@ public class SourcePostProcessor {
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
         processed = removeParameterArrayCasts(processed);
+        processed = restoreStringLocalsFromToStringAssignments(processed);
         processed = unwrapSingleElementRedisSetOperationArrays(processed);
         processed = restoreStringSplitArrayTypes(processed);
         processed = removeGuavaListFactoryCasts(processed);
@@ -124,6 +125,9 @@ public class SourcePostProcessor {
         processed = restorePageInfoLocalsFromPageDataReturnTypes(processed);
         processed = restoreListLocalsFromListReturnTypes(processed);
         processed = restoreNestedListPartitionTypes(processed);
+        processed = restoreRawListTypesFromEnhancedForUsage(processed);
+        processed = restoreIdentifyMapTypes(processed);
+        processed = restoreMapValueTypesFromInitializers(processed);
         processed = restoreGenericListMethodTypeVariableLocals(processed);
         processed = restorePageDataLocalsFromResultReturnTypes(processed);
         processed = restoreRawListElementTypesFromStreamMethodReferences(processed);
@@ -647,6 +651,37 @@ public class SourcePostProcessor {
         return String.join("\n", lines);
     }
 
+    private String restoreRawListTypesFromEnhancedForUsage(String source) {
+        String[] lines = source.split("\\n", -1);
+        Pattern enhancedFor = Pattern.compile("\\bfor\\s*\\(\\s*([^:\\n]+?)\\s+[A-Za-z_$][\\w$]*\\s*:\\s*"
+                + "([A-Za-z_$][\\w$]*)\\s*\\)");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = enhancedFor.matcher(lines[i]);
+            while (matcher.find()) {
+                String elementType = matcher.group(1).trim();
+                String listName = matcher.group(2);
+                typePreviousRawListDeclaration(lines, i, listName, elementType);
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private void typePreviousRawListDeclaration(String[] lines, int currentIndex, String listName, String elementType) {
+        Pattern declaration = Pattern.compile("\\bList\\s+" + Pattern.quote(listName) + "\\s*([;=])");
+        for (int i = currentIndex; i >= 0; i--) {
+            if (i != currentIndex && looksLikeMethodDeclaration(lines[i])) {
+                return;
+            }
+            Matcher matcher = declaration.matcher(lines[i]);
+            if (matcher.find()) {
+                String suffix = matcher.group(1).equals(";") ? ";" : " =";
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "List<" + elementType + "> " + listName + suffix));
+                return;
+            }
+        }
+    }
+
     private String typeNestedListEnhancedFor(String line, String partitionName, String elementType) {
         Pattern enhancedFor = Pattern.compile("\\bfor\\s*\\(\\s*List\\s+([A-Za-z_$][\\w$]*)\\s*:\\s*"
                 + Pattern.quote(partitionName) + "\\s*\\)");
@@ -655,6 +690,35 @@ public class SourcePostProcessor {
         while (matcher.find()) {
             matcher.appendReplacement(buffer, Matcher.quoteReplacement(
                     "for (List<" + elementType + "> " + matcher.group(1) + " : " + partitionName + ")"));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String restoreIdentifyMapTypes(String source) {
+        Matcher matcher = Pattern.compile("(?m)^(\\s*)Map\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "([^;\\n]*\\.getIdentifyMap\\([^;\\n]*;)").matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "Map<Long, String> " + matcher.group(2) + " = " + matcher.group(3)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String restoreMapValueTypesFromInitializers(String source) {
+        Matcher matcher = Pattern.compile("(?m)^(\\s*)Map\\s*<\\s*([^,>]+)\\s*,\\s*Object\\s*>\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*=\\s*new\\s+([A-Za-z_$][\\w$.]*)\\s*<\\s*\\2\\s*,\\s*"
+                + "([^>]+?)\\s*>\\s*\\(([^;\\n]*)\\);").matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String keyType = matcher.group(2).trim();
+            String valueType = matcher.group(5).trim();
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "Map<" + keyType + ", " + valueType + "> " + matcher.group(3)
+                            + " = new " + matcher.group(4) + "<" + keyType + ", " + valueType + ">("
+                            + matcher.group(6) + ");"));
         }
         matcher.appendTail(buffer);
         return buffer.toString();
@@ -995,6 +1059,18 @@ public class SourcePostProcessor {
             if (Pattern.compile("String\\[\\]\\s+" + Pattern.quote(variableName) + "\\b").matcher(source).find()) {
                 matcher.appendReplacement(buffer, Matcher.quoteReplacement(variableName));
             }
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String restoreStringLocalsFromToStringAssignments(String source) {
+        Matcher matcher = Pattern.compile("(?m)^(\\s*)Object\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "([^;\\n]*\\.toString\\(\\)\\s*;)").matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "String " + matcher.group(2) + " = " + matcher.group(3)));
         }
         matcher.appendTail(buffer);
         return buffer.toString();
