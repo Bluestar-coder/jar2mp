@@ -121,6 +121,80 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresCfrLambdaMetafactoryMethodReferences() {
+        String processed = new SourcePostProcessor().process(
+                "LambdaQueryWrapper wrapper = (LambdaQueryWrapper)((LambdaQueryWrapper)new LambdaQueryWrapper()"
+                        + ".isNotNull((SFunction & Serializable)LambdaMetafactory.altMetafactory(null, null, "
+                        + "null, (Ljava/lang/Object;)Ljava/lang/Object;, getIp(), "
+                        + "(Lcom/otc/admin/domain/entity/user/LoginLog;)Ljava/lang/Object;)()))"
+                        + ".last(\" limit \" + num + \",\" + limitCount);\n"
+                        + "log.error(\"id:{}\", list.stream().map((Function<LoginLog, Long>)"
+                        + "LambdaMetafactory.metafactory(null, null, null, "
+                        + "(Ljava/lang/Object;)Ljava/lang/Object;, getLoginLogId(), "
+                        + "(Lcom/otc/admin/domain/entity/user/LoginLog;)Ljava/lang/Long;)())"
+                        + ".collect(Collectors.toList()));\n");
+
+        assertTrue(processed.contains("new LambdaQueryWrapper<LoginLog>().isNotNull(LoginLog::getIp)"));
+        assertTrue(processed.contains("list.stream().map(LoginLog::getLoginLogId)"));
+        assertFalse(processed.contains("LambdaMetafactory"));
+    }
+
+    @Test
+    void restoresCfrMethodOpeningImplicitLocalDeclarations() {
+        String processed = new SourcePostProcessor().process(
+                "public void cryptLoginLogHistorical(int limitCount, Boolean execOnce, Boolean onlyQuery) {\n"
+                        + "        stopWatch = new StopWatch(\"cryptLoginLogHistorical\");\n"
+                        + "        stopWatch.start();\n"
+                        + "        batch = 0;\n"
+                        + "        count = 0;\n"
+                        + "        num = 0;\n"
+                        + "        try {\n"
+                        + "            CryptContext.enableCrypt();\n"
+                        + "            wrapper = (LambdaQueryWrapper)((LambdaQueryWrapper)new LambdaQueryWrapper()"
+                        + ".isNotNull(LoginLog::getIp)).last(\" limit \" + num + \",\" + limitCount);\n"
+                        + "            list = this.loginLogService.list((Wrapper)wrapper);\n"
+                        + "            if (execOnce.booleanValue() && batch > 0) ** break;\n"
+                        + "        }\n"
+                        + "        catch (Throwable t) {\n"
+                        + "            stopWatch.stop();\n"
+                        + "            throw t;\n"
+                        + "        }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("StopWatch stopWatch = new StopWatch(\"cryptLoginLogHistorical\");"));
+        assertTrue(processed.contains("int batch = 0;"));
+        assertTrue(processed.contains("int count = 0;"));
+        assertTrue(processed.contains("int num = 0;"));
+        assertTrue(processed.contains("LambdaQueryWrapper<LoginLog> wrapper = "
+                + "(LambdaQueryWrapper<LoginLog>)((LambdaQueryWrapper<LoginLog>)new "
+                + "LambdaQueryWrapper<LoginLog>().isNotNull(LoginLog::getIp))"));
+        assertTrue(processed.contains("List<LoginLog> list = this.loginLogService.list((Wrapper)wrapper);"));
+        assertTrue(processed.contains("if (execOnce.booleanValue() && batch > 0) break;"));
+        assertFalse(processed.contains("** break"));
+    }
+
+    @Test
+    void doesNotRedeclareExistingRawListFromWrapperAssignment() {
+        String processed = new SourcePostProcessor().process(
+                "public void emailSuffixMatchesUser() {\n"
+                        + "    LambdaQueryWrapper queryWrapper = (LambdaQueryWrapper)new LambdaQueryWrapper()"
+                        + ".gt(Account::getUid, startUid);\n"
+                        + "    List accountList = new ArrayList();\n"
+                        + "    try {\n"
+                        + "        accountList = this.accountService.list((Wrapper)queryWrapper);\n"
+                        + "    }\n"
+                        + "    catch (Exception e) {\n"
+                        + "    }\n"
+                        + "    for (Account account : accountList) {\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<Account> accountList = new ArrayList();"));
+        assertTrue(processed.contains("accountList = this.accountService.list((Wrapper)queryWrapper);"));
+        assertFalse(processed.contains("List<Account> accountList = this.accountService.list"));
+    }
+
+    @Test
     void restoresLambdaUpdateWrapperEntityTypeFromMethodReferences() {
         String processed = new SourcePostProcessor().process(
                 "this.sysUserMapper.update(null, (Wrapper)((LambdaUpdateWrapper)new LambdaUpdateWrapper()"

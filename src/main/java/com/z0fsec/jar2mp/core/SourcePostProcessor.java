@@ -63,6 +63,11 @@ public class SourcePostProcessor {
             "\\bLambdaQueryWrapper\\s+([A-Za-z_$][\\w$]*)\\s*=");
     private static final Pattern LAMBDA_QUERY_WRAPPER_ASSIGNMENT = Pattern.compile(
             "\\b([A-Za-z_$][\\w$]*)\\s*=\\s*(?:\\(LambdaQueryWrapper(?:<[^>]+>)?\\)|new\\s+LambdaQueryWrapper(?:<[^>]+>)?\\()");
+    private static final Pattern CFR_LAMBDA_METAFACTORY_METHOD_REFERENCE = Pattern.compile(
+            "(?:\\([A-Za-z0-9_$.,<>?\\s&]+\\)\\s*)?"
+                    + "LambdaMetafactory\\.(?:altMetafactory|metafactory)\\([^\\n]*?"
+                    + "\\b([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\)\\s*,\\s*\\(L([^;\\n)]+);\\)"
+                    + "[^\\n]*?\\)\\s*\\(\\s*\\)");
     private static final Pattern PAGE_INFO_ROW_LIST_METHOD_REFERENCE = Pattern.compile(
             "\\b([A-Za-z_$][\\w$]*)\\.getRowList\\(\\)\\.stream\\(\\)\\.map\\(\\s*"
                     + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::");
@@ -164,8 +169,10 @@ public class SourcePostProcessor {
 
         String processed = stripDecompilerHeader(source);
         processed = removeDecompilerDiagnosticComments(processed);
+        processed = restoreCfrLambdaMetafactoryMethodReferences(processed);
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
+        processed = restoreCfrBrokenBreakMarkers(processed);
         processed = removeParameterArrayCasts(processed);
         processed = restoreStringLocalsFromToStringAssignments(processed);
         processed = unwrapSingleElementRedisSetOperationArrays(processed);
@@ -187,6 +194,7 @@ public class SourcePostProcessor {
         processed = addNumericGenericElementTypes(processed);
         processed = addObjectElementTypesToRawListCasts(processed);
         processed = restoreLambdaQueryWrapperEntityTypes(processed);
+        processed = restoreCfrImplicitLocalDeclarations(processed);
         processed = restoreLambdaUpdateWrapperEntityTypes(processed);
         processed = restoreLambdaQueryChainWrapperEntityTypes(processed);
         processed = restoreLambdaUpdateChainWrapperEntityTypes(processed);
@@ -346,6 +354,138 @@ public class SourcePostProcessor {
             lines[i] = line;
         }
         return String.join("\n", lines);
+    }
+
+    private String restoreCfrLambdaMetafactoryMethodReferences(String source) {
+        if (!source.contains("LambdaMetafactory.")) {
+            return source;
+        }
+        Matcher matcher = CFR_LAMBDA_METAFACTORY_METHOD_REFERENCE.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String methodName = matcher.group(1);
+            String ownerType = simpleInternalTypeName(matcher.group(2));
+            if (!isGetterMethodReference(methodName) || ownerType == null) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group()));
+                continue;
+            }
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(ownerType + "::" + methodName));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String restoreCfrBrokenBreakMarkers(String source) {
+        return source.replaceAll("\\)\\s*\\*\\*\\s*break;", ") break;");
+    }
+
+    private String restoreCfrImplicitLocalDeclarations(String source) {
+        String[] lines = source.split("\\n", -1);
+        Set<String> declaredNames = new LinkedHashSet<>();
+        Map<String, String> currentWrapperTypes = new LinkedHashMap<>();
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (looksLikeMethodDeclaration(line)) {
+                declaredNames.clear();
+                currentWrapperTypes.clear();
+                continue;
+            }
+
+            String restored = restoreImplicitStopWatchDeclaration(line, declaredNames);
+            restored = restoreImplicitIntZeroDeclaration(restored, declaredNames);
+            restored = restoreImplicitLambdaQueryWrapperDeclaration(restored, declaredNames, currentWrapperTypes);
+            restored = restoreImplicitListDeclaration(restored, declaredNames, currentWrapperTypes);
+            lines[i] = restored;
+            collectDeclaredLocalNames(restored, declaredNames);
+            collectLambdaQueryWrapperTypes(restored, currentWrapperTypes);
+        }
+        return String.join("\n", lines);
+    }
+
+    private String restoreImplicitStopWatchDeclaration(String line, Set<String> declaredNames) {
+        Matcher matcher = Pattern.compile("^(\\s*)([A-Za-z_$][\\w$]*)\\s*=\\s*new\\s+StopWatch\\s*\\(")
+                .matcher(line);
+        if (!matcher.find() || declaredNames.contains(matcher.group(2))) {
+            return line;
+        }
+        return matcher.replaceFirst(Matcher.quoteReplacement(
+                matcher.group(1) + "StopWatch " + matcher.group(2) + " = new StopWatch("));
+    }
+
+    private String restoreImplicitIntZeroDeclaration(String line, Set<String> declaredNames) {
+        Matcher matcher = Pattern.compile("^(\\s*)([A-Za-z_$][\\w$]*)\\s*=\\s*0\\s*;").matcher(line);
+        if (!matcher.find() || declaredNames.contains(matcher.group(2))
+                || !isCommonCfrCounterLocal(matcher.group(2))) {
+            return line;
+        }
+        return matcher.replaceFirst(Matcher.quoteReplacement(
+                matcher.group(1) + "int " + matcher.group(2) + " = 0;"));
+    }
+
+    private String restoreImplicitLambdaQueryWrapperDeclaration(String line, Set<String> declaredNames,
+                                                               Map<String, String> currentWrapperTypes) {
+        Matcher matcher = Pattern.compile("^(\\s*)([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "([^;\\n]*LambdaQueryWrapper\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>[^;\\n]*;)")
+                .matcher(line);
+        if (!matcher.find() || declaredNames.contains(matcher.group(2))) {
+            return line;
+        }
+        String wrapperName = matcher.group(2);
+        String entityType = matcher.group(4).trim();
+        currentWrapperTypes.put(wrapperName, entityType);
+        return matcher.replaceFirst(Matcher.quoteReplacement(
+                matcher.group(1) + "LambdaQueryWrapper<" + entityType + "> " + wrapperName + " = "
+                        + matcher.group(3)));
+    }
+
+    private String restoreImplicitListDeclaration(String line, Set<String> declaredNames,
+                                                  Map<String, String> currentWrapperTypes) {
+        Matcher matcher = Pattern.compile("^(\\s*)([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "([^;\\n]*\\.list\\s*\\(\\s*(?:\\(Wrapper\\)\\s*)?"
+                + "([A-Za-z_$][\\w$]*)\\s*\\)[^;\\n]*;)")
+                .matcher(line);
+        if (!matcher.find() || declaredNames.contains(matcher.group(2))) {
+            return line;
+        }
+        String entityType = currentWrapperTypes.get(matcher.group(4));
+        if (entityType == null) {
+            return line;
+        }
+        return matcher.replaceFirst(Matcher.quoteReplacement(
+                matcher.group(1) + "List<" + entityType + "> " + matcher.group(2) + " = " + matcher.group(3)));
+    }
+
+    private void collectDeclaredLocalNames(String line, Set<String> declaredNames) {
+        Matcher matcher = Pattern.compile("\\b(?:StopWatch|int|LambdaQueryWrapper\\s*<[^>]+>|List(?:\\s*<[^>]+>)?)\\s+"
+                + "([A-Za-z_$][\\w$]*)\\b").matcher(line);
+        while (matcher.find()) {
+            declaredNames.add(matcher.group(1));
+        }
+    }
+
+    private void collectLambdaQueryWrapperTypes(String line, Map<String, String> currentWrapperTypes) {
+        Matcher matcher = Pattern.compile("\\bLambdaQueryWrapper\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s+"
+                + "([A-Za-z_$][\\w$]*)\\b").matcher(line);
+        while (matcher.find()) {
+            currentWrapperTypes.put(matcher.group(2), matcher.group(1));
+        }
+    }
+
+    private boolean isCommonCfrCounterLocal(String name) {
+        return "batch".equals(name) || "count".equals(name) || "num".equals(name);
+    }
+
+    private boolean isGetterMethodReference(String methodName) {
+        return methodName != null && (methodName.startsWith("get") || methodName.startsWith("is"));
+    }
+
+    private String simpleInternalTypeName(String internalName) {
+        if (internalName == null || internalName.isEmpty()) {
+            return null;
+        }
+        int lastSlash = internalName.lastIndexOf('/');
+        String simpleName = lastSlash >= 0 ? internalName.substring(lastSlash + 1) : internalName;
+        return simpleName.replace('$', '.');
     }
 
     private String firstMethodReferenceType(String line) {
