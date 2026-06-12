@@ -51,6 +51,8 @@ Reports:
 
 The source diff report lists reference-only Java files, generated-only Java files,
 and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
+The summary also includes class bytecode and ZIP metadata fidelity details from
+each artifact-fidelity-summary.csv.
 EOF
 }
 
@@ -423,6 +425,14 @@ run_restore_mode() {
   set_var "${prefix}_compile_fallback_classes" "$(markdown_field "${verification_report}" "Compile fallback classes" "missing")"
   set_var "${prefix}_decompile_failures" "$(count_decompile_failures "${decompile_failures}")"
   set_var "${prefix}_exact" "$(csv_column_by_name "${fidelity_summary}" "exact_match" "missing")"
+  set_var "${prefix}_content_entries_match" "$(csv_column_by_name "${fidelity_summary}" "content_entries_match" "missing")"
+  set_var "${prefix}_same_class_bytes" "$(csv_column_by_name "${fidelity_summary}" "same_class_bytes" "missing")"
+  set_var "${prefix}_different_class_bytes" "$(csv_column_by_name "${fidelity_summary}" "different_class_bytes" "missing")"
+  set_var "${prefix}_same_nested_libs" "$(csv_column_by_name "${fidelity_summary}" "same_nested_libs" "missing")"
+  set_var "${prefix}_different_nested_libs" "$(csv_column_by_name "${fidelity_summary}" "different_nested_libs" "missing")"
+  set_var "${prefix}_archive_entry_order_same" "$(csv_column_by_name "${fidelity_summary}" "archive_entry_order_same" "missing")"
+  set_var "${prefix}_archive_metadata_diff_entries" "$(csv_column_by_name "${fidelity_summary}" "archive_metadata_diff_entries" "missing")"
+  set_var "${prefix}_archive_bytes_same" "$(csv_column_by_name "${fidelity_summary}" "archive_bytes_same" "missing")"
   set_var "${prefix}_original_sha256" "$(csv_column_by_name "${fidelity_summary}" "original_archive_sha256" "missing")"
   set_var "${prefix}_rebuilt_sha256" "$(csv_column_by_name "${fidelity_summary}" "rebuilt_archive_sha256" "missing")"
 }
@@ -475,7 +485,7 @@ write_source_diff_report \
   "${ORIGINAL_JAR_ENTRIES}"
 
 {
-  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_exact,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_exact,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_project\n'
+  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_project\n'
   csv_field "otc-admin"; printf ','
   csv_field "${OTC_ADMIN_JAR}"; printf ','
   csv_field "${JAR_SIZE_BYTES}"; printf ','
@@ -497,6 +507,14 @@ write_source_diff_report \
   csv_field "${package_record_compile_fallback_classes}"; printf ','
   csv_field "${package_record_decompile_failures}"; printf ','
   csv_field "${package_record_exact}"; printf ','
+  csv_field "${package_record_content_entries_match}"; printf ','
+  csv_field "${package_record_same_class_bytes}"; printf ','
+  csv_field "${package_record_different_class_bytes}"; printf ','
+  csv_field "${package_record_same_nested_libs}"; printf ','
+  csv_field "${package_record_different_nested_libs}"; printf ','
+  csv_field "${package_record_archive_entry_order_same}"; printf ','
+  csv_field "${package_record_archive_metadata_diff_entries}"; printf ','
+  csv_field "${package_record_archive_bytes_same}"; printf ','
   csv_field "${package_record_original_sha256}"; printf ','
   csv_field "${package_record_rebuilt_sha256}"; printf ','
   csv_field "${package_record_artifact_sha256}"; printf ','
@@ -508,6 +526,14 @@ write_source_diff_report \
   csv_field "${byte_exact_compile_fallback_classes}"; printf ','
   csv_field "${byte_exact_decompile_failures}"; printf ','
   csv_field "${byte_exact_exact}"; printf ','
+  csv_field "${byte_exact_content_entries_match}"; printf ','
+  csv_field "${byte_exact_same_class_bytes}"; printf ','
+  csv_field "${byte_exact_different_class_bytes}"; printf ','
+  csv_field "${byte_exact_same_nested_libs}"; printf ','
+  csv_field "${byte_exact_different_nested_libs}"; printf ','
+  csv_field "${byte_exact_archive_entry_order_same}"; printf ','
+  csv_field "${byte_exact_archive_metadata_diff_entries}"; printf ','
+  csv_field "${byte_exact_archive_bytes_same}"; printf ','
   csv_field "${byte_exact_original_sha256}"; printf ','
   csv_field "${byte_exact_rebuilt_sha256}"; printf ','
   csv_field "${byte_exact_artifact_sha256}"; printf ','
@@ -539,6 +565,19 @@ write_source_diff_report \
     "${byte_exact_verification_failure_type}" "${byte_exact_verification_error_count}" \
     "${byte_exact_compile_fallback_classes}" "${byte_exact_decompile_failures}" \
     "${byte_exact_exact}" "${byte_exact_rebuilt_sha256}"
+  printf '## Artifact fidelity details\n\n'
+  printf '| Mode | Content entries match | Same class bytes | Different class bytes | Same nested libs | Different nested libs | Entry order same | ZIP metadata diff entries | Archive bytes same |\n'
+  printf '| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |\n'
+  printf '| package-record | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+    "${package_record_content_entries_match}" "${package_record_same_class_bytes}" \
+    "${package_record_different_class_bytes}" "${package_record_same_nested_libs}" \
+    "${package_record_different_nested_libs}" "${package_record_archive_entry_order_same}" \
+    "${package_record_archive_metadata_diff_entries}" "${package_record_archive_bytes_same}"
+  printf '| byte-exact | %s | %s | %s | %s | %s | %s | %s | %s |\n\n' \
+    "${byte_exact_content_entries_match}" "${byte_exact_same_class_bytes}" \
+    "${byte_exact_different_class_bytes}" "${byte_exact_same_nested_libs}" \
+    "${byte_exact_different_nested_libs}" "${byte_exact_archive_entry_order_same}" \
+    "${byte_exact_archive_metadata_diff_entries}" "${byte_exact_archive_bytes_same}"
   printf '## Artifacts\n\n'
   printf '%s\n' "- package-record project: \`${package_record_project_dir}\`"
   printf '%s\n' "- package-record artifact: \`${package_record_artifact_path}\`"
@@ -563,6 +602,12 @@ check_gate "package-record jar2mp exit" "${package_record_exit_code}" "0"
 check_gate "package-record verification summary" "${package_record_verification_summary}" "BUILD SUCCESS"
 check_gate "package-record failure type" "${package_record_verification_failure_type}" "NONE"
 check_gate "package-record exact match" "${package_record_exact}" "true"
+check_gate "package-record content entries match" "${package_record_content_entries_match}" "true"
+check_gate "package-record class byte diffs" "${package_record_different_class_bytes}" "0"
+check_gate "package-record nested lib diffs" "${package_record_different_nested_libs}" "0"
+check_gate "package-record entry order" "${package_record_archive_entry_order_same}" "true"
+check_gate "package-record metadata diffs" "${package_record_archive_metadata_diff_entries}" "0"
+check_gate "package-record archive bytes" "${package_record_archive_bytes_same}" "true"
 check_gate "package-record original SHA" "${package_record_original_sha256}" "${ORIGINAL_SHA256}"
 check_gate "package-record rebuilt SHA" "${package_record_rebuilt_sha256}" "${ORIGINAL_SHA256}"
 check_gate "package-record artifact SHA" "${package_record_artifact_sha256}" "${ORIGINAL_SHA256}"
@@ -571,6 +616,12 @@ check_gate "byte-exact jar2mp exit" "${byte_exact_exit_code}" "0"
 check_gate "byte-exact verification summary" "${byte_exact_verification_summary}" "BUILD SUCCESS"
 check_gate "byte-exact failure type" "${byte_exact_verification_failure_type}" "NONE"
 check_gate "byte-exact exact match" "${byte_exact_exact}" "true"
+check_gate "byte-exact content entries match" "${byte_exact_content_entries_match}" "true"
+check_gate "byte-exact class byte diffs" "${byte_exact_different_class_bytes}" "0"
+check_gate "byte-exact nested lib diffs" "${byte_exact_different_nested_libs}" "0"
+check_gate "byte-exact entry order" "${byte_exact_archive_entry_order_same}" "true"
+check_gate "byte-exact metadata diffs" "${byte_exact_archive_metadata_diff_entries}" "0"
+check_gate "byte-exact archive bytes" "${byte_exact_archive_bytes_same}" "true"
 check_gate "byte-exact original SHA" "${byte_exact_original_sha256}" "${ORIGINAL_SHA256}"
 check_gate "byte-exact rebuilt SHA" "${byte_exact_rebuilt_sha256}" "${ORIGINAL_SHA256}"
 check_gate "byte-exact artifact SHA" "${byte_exact_artifact_sha256}" "${ORIGINAL_SHA256}"
