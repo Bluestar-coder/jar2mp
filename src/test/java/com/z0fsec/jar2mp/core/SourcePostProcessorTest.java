@@ -172,6 +172,19 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void leavesPageDataRawWhenMappedToDifferentReturnDto() {
+        String processed = new SourcePostProcessor().process(
+                "public Result<PageData<GroupsMemberListV2DTO>> getPage() {\n"
+                        + "    PageData pageDate = this.groupMemberService.queryByPage(req, pageRequest);\n"
+                        + "    return this.handleResult(new PageData(GroupMemberMapstruct.INSTANCE.toList(pageDate.getList()), "
+                        + "pageDate.getTotal(), pageDate.getCurrent(), pageDate.getLimit(), pageDate.getPages()));\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageData pageDate = this.groupMemberService.queryByPage"));
+        assertFalse(processed.contains("PageData<GroupsMemberListV2DTO> pageDate"));
+    }
+
+    @Test
     void restoresLambdaQueryChainWrapperEntityTypeFromMethodReferences() {
         String processed = new SourcePostProcessor().process(
                 "return ((LambdaQueryChainWrapper)((LambdaQueryChainWrapper)this.contactsService.lambdaQuery()"
@@ -211,6 +224,156 @@ class SourcePostProcessorTest {
         assertTrue(processed.contains("java.util.List<String> limitsKeys;"));
         assertTrue(processed.contains("Lists.newArrayList(annotation.value())"));
         assertTrue(processed.contains("Lists.newArrayList(limitsKeys).stream()"));
+    }
+
+    @Test
+    void addsImmutableMapBuilderTypeArgumentsFromMapReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "private Map<Long, String> getUserMap(User user, List<Long> uidList) {\n"
+                        + "    return Optional.ofNullable(user).map(e -> ImmutableMap.builder()"
+                        + ".put(e.getUid(), e.getIdentify()).build()).orElseGet(() -> Maps.newHashMap());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("ImmutableMap.<Long, String>builder()"));
+    }
+
+    @Test
+    void castsImmutableMapBuilderLambdaToMapReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "private Map<Long, String> getUserMap(User user, List<Long> uidList) {\n"
+                        + "    return Optional.ofNullable(user).map(e -> ImmutableMap.builder()"
+                        + ".put(e.getUid(), e.getIdentify()).build()).orElseGet(() -> this.findUserMap(uidList));\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("map(e -> (Map<Long, String>)ImmutableMap.<Long, String>builder()"));
+    }
+
+    @Test
+    void restoresGenericReturnLocalTypeFromQualifiedCall() {
+        String processed = new SourcePostProcessor().process(
+                "public static void sendStringByUid(Long uid) {\n"
+                        + "    Set userSocketSessionAll = WebSocketServer.getWebSocketSessionByUid((Long)uid);\n"
+                        + "}\n"
+                        + "private static Set<WebSocketSession> getWebSocketSessionByUid(Long uid) {\n"
+                        + "    return uidToSessionMap.get(uid);\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("Set<WebSocketSession> userSocketSessionAll = "
+                + "WebSocketServer.getWebSocketSessionByUid"));
+    }
+
+    @Test
+    void addsRawCollectionElementTypeWhenEnhancedForUsesTypedElement() {
+        String processed = new SourcePostProcessor().process(
+                "HashSet sessionsCopy = new HashSet(userSocketSessionAll);\n"
+                        + "for (WebSocketSession socketSession : sessionsCopy) {\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("HashSet<WebSocketSession> sessionsCopy = new HashSet<WebSocketSession>"));
+        assertTrue(processed.contains("for (WebSocketSession socketSession : sessionsCopy)"));
+    }
+
+    @Test
+    void restoresRawListElementTypeFromStreamMethodReference() {
+        String processed = new SourcePostProcessor().process(
+                "List list = this.redPacketService.getRedPacketList(req);\n"
+                        + "Set sourceRedPacketIds = list.stream().map(RedPacket::getId).collect(Collectors.toSet());\n");
+
+        assertTrue(processed.contains("List<RedPacket> list = this.redPacketService.getRedPacketList(req);"));
+    }
+
+    @Test
+    void doesNotInferRawListElementTypeFromLaterMethodWithSameVariableName() {
+        String processed = new SourcePostProcessor().process(
+                "public boolean removeDuplicateReg() {\n"
+                        + "    List list = this.accountService.listDuplicateReg();\n"
+                        + "    for (Map accountMap : list) {}\n"
+                        + "    return true;\n"
+                        + "}\n"
+                        + "private void disabledUser(List<User> list) {\n"
+                        + "    List uidList = list.stream().map(User::getUid).collect(Collectors.toList());\n"
+                        + "}\n");
+
+        assertFalse(processed.contains("List<User> list = this.accountService.listDuplicateReg();"));
+    }
+
+    @Test
+    void restoresPageInfoLocalTypeFromPageDataMethodReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<GroupObserverMemberAuditPageResp> getObserverList() {\n"
+                        + "    PageInfo resp = this.groupObserverMemberApi.getObserverList(req);\n"
+                        + "    resp.getRowList().forEach(item -> item.getGroupObserverMemberRespList());\n"
+                        + "    return new PageData(resp.getRowList(), resp.getTotal());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageInfo<GroupObserverMemberAuditPageResp> resp"));
+    }
+
+    @Test
+    void leavesPageInfoRawWhenRowsAreMappedToReturnDto() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<AssistUserResp> assistUserPage() {\n"
+                        + "    PageInfo resp = this.assistUserInnerInnerApi.queryPage(req);\n"
+                        + "    return new PageData(AssistUserMapstruct.INSTANCE.toResp(resp.getRowList()), "
+                        + "resp.getTotal(), resp.getPageNum(), resp.getPageSize());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageInfo resp = this.assistUserInnerInnerApi.queryPage(req);"));
+        assertFalse(processed.contains("PageInfo<AssistUserResp> resp"));
+    }
+
+    @Test
+    void restoresListLocalTypeFromListMethodReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "public List<GroupObserverMemberPageResp> getGroupInfoByIds() {\n"
+                        + "    List resp = this.groupObserverMemberApi.getGroupInfoByIds(req);\n"
+                        + "    resp.forEach(item -> item.setGroupName(item.getGroupName()));\n"
+                        + "    return resp;\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<GroupObserverMemberPageResp> resp"));
+    }
+
+    @Test
+    void restoresGenericListMethodTypeVariableLocals() {
+        String processed = new SourcePostProcessor().process(
+                "public static <S, T> List<T> copyListProperties(List<S> sources, Supplier<T> target) {\n"
+                        + "    ArrayList<Object> list = new ArrayList<Object>(sources.size());\n"
+                        + "    for (S source : sources) {\n"
+                        + "        Object t = BeanCopyUtils.copy(source, target);\n"
+                        + "        list.add(t);\n"
+                        + "    }\n"
+                        + "    return list;\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("ArrayList<T> list = new ArrayList<T>(sources.size());"));
+        assertTrue(processed.contains("T t = BeanCopyUtils.copy(source, target);"));
+    }
+
+    @Test
+    void scopesStreamMethodReferenceOwnerAlignmentToCurrentMethod() {
+        String processed = new SourcePostProcessor().process(
+                "public void first() {\n"
+                        + "    List<RechargePointsPageDTO> respList = mapper.toRechargeList(resp.getRowList());\n"
+                        + "    List uids = respList.stream().map(ConsumerPageDTO::getUid).collect(Collectors.toList());\n"
+                        + "}\n"
+                        + "public void second() {\n"
+                        + "    List<ConsumerPageDTO> respList = mapper.toConsumerList(resp.getRowList());\n"
+                        + "    List uids = respList.stream().map(RechargePointsPageDTO::getUid).collect(Collectors.toList());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("respList.stream().map(RechargePointsPageDTO::getUid)"));
+        assertTrue(processed.contains("respList.stream().map(ConsumerPageDTO::getUid)"));
+    }
+
+    @Test
+    void preservesStaticParseMethodReferencesWhenListElementTypeIsDifferent() {
+        String processed = new SourcePostProcessor().process(
+                "List<String> list = Arrays.stream(uids.split(\",\")).toList();\n"
+                        + "List uidList = list.stream().map(Long::parseLong).collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("list.stream().map(Long::parseLong)"));
+        assertFalse(processed.contains("String::parseLong"));
     }
 
     @Test
