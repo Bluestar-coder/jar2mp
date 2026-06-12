@@ -56,11 +56,12 @@ Reports:
   target/otc-admin-sample/report/otc-admin-summary.csv
   target/otc-admin-sample/report/otc-admin-summary.md
   target/otc-admin-sample/report/otc-admin-source-diff.txt
+  target/otc-admin-sample/report/otc-admin-source-content-diff.txt
   target/otc-admin-sample/report/package-record.cli.log
   target/otc-admin-sample/report/byte-exact.cli.log
 
 The source diff report lists reference-only Java files, generated-only Java files,
-and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
+shared Java content differences, and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
 The summary also includes class bytecode and ZIP metadata fidelity details from
 each artifact-fidelity-summary.csv, plus the decompile parity risk summary,
 HIGH/MEDIUM method index, risk reason breakdown from each decompile-parity-report.md,
@@ -634,19 +635,38 @@ write_presence_table() {
   printf '\n'
 }
 
+write_content_diff_table() {
+  local count="$1"
+  local diff_list="$2"
+  printf '## Shared Java files with content differences\n\n'
+  if [[ "${count}" == "0" ]]; then
+    printf 'None\n\n'
+    return
+  fi
+  printf '| Java file |\n'
+  printf '| --- |\n'
+  awk '{ printf "| `%s` |\n", $0 }' "${diff_list}"
+  printf '\n'
+}
+
 write_source_diff_report() {
   local generated_dir="$1"
   local reference_dir="$2"
   local report="$3"
   local entries_file="$4"
+  local content_diff_report="$5"
   local reference_list="${REPORT_DIR}/.reference-java-files"
   local generated_list="${REPORT_DIR}/.generated-java-files"
+  local shared_list="${REPORT_DIR}/.shared-java-files"
   local reference_only="${REPORT_DIR}/.reference-only-java-files"
   local generated_only="${REPORT_DIR}/.generated-only-java-files"
+  local content_diff_list="${REPORT_DIR}/.shared-java-content-diff-files"
   local reference_only_presence="${REPORT_DIR}/.reference-only-class-presence"
   local generated_only_presence="${REPORT_DIR}/.generated-only-class-presence"
 
   if [[ ! -d "${generated_dir}" || ! -d "${reference_dir}" ]]; then
+    set_var "SHARED_JAVA_FILES" "missing"
+    set_var "SHARED_JAVA_CONTENT_DIFF_FILES" "missing"
     set_var "REFERENCE_ONLY_JAVA_FILES" "missing"
     set_var "GENERATED_ONLY_JAVA_FILES" "missing"
     set_var "REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT" "missing"
@@ -659,14 +679,44 @@ write_source_diff_report() {
       printf '%s\n' "- Generated source dir: \`${generated_dir}\`"
       printf '%s\n' "- Reference source dir: \`${reference_dir}\`"
     } > "${report}"
+    {
+      printf '# OTC Admin Shared Source Content Diff\n\n'
+      printf 'Source content diff unavailable.\n\n'
+      printf '%s\n' "- Generated source dir: \`${generated_dir}\`"
+      printf '%s\n' "- Reference source dir: \`${reference_dir}\`"
+    } > "${content_diff_report}"
     return
   fi
 
   (cd "${reference_dir}" && find . -type f -name '*.java' | sed 's#^\./##' | sort) > "${reference_list}"
   (cd "${generated_dir}" && find . -type f -name '*.java' | sed 's#^\./##' | sort) > "${generated_list}"
+  comm -12 "${reference_list}" "${generated_list}" > "${shared_list}"
   comm -23 "${reference_list}" "${generated_list}" > "${reference_only}"
   comm -13 "${reference_list}" "${generated_list}" > "${generated_only}"
 
+  : > "${content_diff_list}"
+  {
+    printf '# OTC Admin Shared Source Content Diff\n\n'
+    printf '%s\n' "- Generated source dir: \`${generated_dir}\`"
+    printf '%s\n\n' "- Reference source dir: \`${reference_dir}\`"
+  } > "${content_diff_report}"
+  while IFS= read -r java_file; do
+    [[ -z "${java_file}" ]] && continue
+    if cmp -s "${reference_dir}/${java_file}" "${generated_dir}/${java_file}"; then
+      continue
+    fi
+    printf '%s\n' "${java_file}" >> "${content_diff_list}"
+    {
+      printf '\n## %s\n\n' "${java_file}"
+      diff -u "${reference_dir}/${java_file}" "${generated_dir}/${java_file}" || true
+    } >> "${content_diff_report}"
+  done < "${shared_list}"
+  if [[ ! -s "${content_diff_list}" ]]; then
+    printf 'No shared Java content differences.\n' >> "${content_diff_report}"
+  fi
+
+  set_var "SHARED_JAVA_FILES" "$(count_file_lines "${shared_list}")"
+  set_var "SHARED_JAVA_CONTENT_DIFF_FILES" "$(count_file_lines "${content_diff_list}")"
   set_var "REFERENCE_ONLY_JAVA_FILES" "$(count_file_lines "${reference_only}")"
   set_var "GENERATED_ONLY_JAVA_FILES" "$(count_file_lines "${generated_only}")"
   write_class_presence_list "${reference_only}" "${entries_file}" "${reference_only_presence}"
@@ -680,6 +730,9 @@ write_source_diff_report() {
     printf '# OTC Admin Source File Diff\n\n'
     printf '%s\n' "- Generated source dir: \`${generated_dir}\`"
     printf '%s\n' "- Reference source dir: \`${reference_dir}\`"
+    printf '%s\n' "- Shared Java files: \`${SHARED_JAVA_FILES}\`"
+    printf '%s\n' "- Shared Java files with content differences: \`${SHARED_JAVA_CONTENT_DIFF_FILES}\`"
+    printf '%s\n' "- Source content diff report: \`${content_diff_report}\`"
     printf '%s\n' "- Reference-only Java files: \`${REFERENCE_ONLY_JAVA_FILES}\`"
     printf '%s\n' "- Generated-only Java files: \`${GENERATED_ONLY_JAVA_FILES}\`"
     printf '%s\n' "- Reference-only Java files with original JAR class: \`${REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT}\`"
@@ -687,11 +740,13 @@ write_source_diff_report() {
     printf '%s\n' "- Generated-only Java files with original JAR class: \`${GENERATED_ONLY_ORIGINAL_CLASS_PRESENT}\`"
     printf '%s\n\n' "- Generated-only Java files absent from original JAR classes: \`${GENERATED_ONLY_ORIGINAL_CLASS_ABSENT}\`"
 
+    write_content_diff_table "${SHARED_JAVA_CONTENT_DIFF_FILES}" "${content_diff_list}"
     write_presence_table "Reference-only Java files" "${REFERENCE_ONLY_JAVA_FILES}" "${reference_only_presence}"
     write_presence_table "Generated-only Java files" "${GENERATED_ONLY_JAVA_FILES}" "${generated_only_presence}"
   } > "${report}"
 
-  rm -f "${reference_list}" "${generated_list}" "${reference_only}" "${generated_only}" \
+  rm -f "${reference_list}" "${generated_list}" "${shared_list}" "${reference_only}" "${generated_only}" \
+    "${content_diff_list}" \
     "${reference_only_presence}" "${generated_only_presence}"
 }
 
@@ -836,14 +891,16 @@ JAR_SIZE_BYTES="$(wc -c < "${OTC_ADMIN_JAR}" | tr -d '[:space:]')"
 CSV_REPORT="${REPORT_DIR}/otc-admin-summary.csv"
 MD_REPORT="${REPORT_DIR}/otc-admin-summary.md"
 SOURCE_DIFF_REPORT="${REPORT_DIR}/otc-admin-source-diff.txt"
+SOURCE_CONTENT_DIFF_REPORT="${REPORT_DIR}/otc-admin-source-content-diff.txt"
 write_source_diff_report \
   "${package_record_project_dir}/src/main/java" \
   "${OTC_ADMIN_REFERENCE_PROJECT}/src/main/java" \
   "${SOURCE_DIFF_REPORT}" \
-  "${ORIGINAL_JAR_ENTRIES}"
+  "${ORIGINAL_JAR_ENTRIES}" \
+  "${SOURCE_CONTENT_DIFF_REPORT}"
 
 {
-  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_overall_score,package_record_source_score,package_record_resource_score,package_record_runtime_score,package_record_runtime_launch_support,package_record_runtime_run_status,package_record_runtime_failure_message,package_record_runtime_failure_cause,package_record_runtime_events,package_record_verification_score,package_record_gap_count,package_record_gap_categories,package_record_build_gate,package_record_source_coverage_gate,package_record_byte_package_gate,package_record_runtime_observation_gate,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_parity_risk_reasons,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_overall_score,byte_exact_source_score,byte_exact_resource_score,byte_exact_runtime_score,byte_exact_runtime_launch_support,byte_exact_runtime_run_status,byte_exact_runtime_failure_message,byte_exact_runtime_failure_cause,byte_exact_runtime_events,byte_exact_verification_score,byte_exact_gap_count,byte_exact_gap_categories,byte_exact_build_gate,byte_exact_source_coverage_gate,byte_exact_byte_package_gate,byte_exact_runtime_observation_gate,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_parity_risk_reasons,byte_exact_project\n'
+  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,shared_java_files,shared_java_content_diff_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,source_content_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_overall_score,package_record_source_score,package_record_resource_score,package_record_runtime_score,package_record_runtime_launch_support,package_record_runtime_run_status,package_record_runtime_failure_message,package_record_runtime_failure_cause,package_record_runtime_events,package_record_verification_score,package_record_gap_count,package_record_gap_categories,package_record_build_gate,package_record_source_coverage_gate,package_record_byte_package_gate,package_record_runtime_observation_gate,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_parity_risk_reasons,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_overall_score,byte_exact_source_score,byte_exact_resource_score,byte_exact_runtime_score,byte_exact_runtime_launch_support,byte_exact_runtime_run_status,byte_exact_runtime_failure_message,byte_exact_runtime_failure_cause,byte_exact_runtime_events,byte_exact_verification_score,byte_exact_gap_count,byte_exact_gap_categories,byte_exact_build_gate,byte_exact_source_coverage_gate,byte_exact_byte_package_gate,byte_exact_runtime_observation_gate,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_parity_risk_reasons,byte_exact_project\n'
   csv_field "otc-admin"; printf ','
   csv_field "${OTC_ADMIN_JAR}"; printf ','
   csv_field "${JAR_SIZE_BYTES}"; printf ','
@@ -851,6 +908,8 @@ write_source_diff_report \
   csv_field "${OTC_ADMIN_REFERENCE_PROJECT}"; printf ','
   csv_field "${REFERENCE_JAVA_FILES}"; printf ','
   csv_field "${GENERATED_JAVA_FILES}"; printf ','
+  csv_field "${SHARED_JAVA_FILES}"; printf ','
+  csv_field "${SHARED_JAVA_CONTENT_DIFF_FILES}"; printf ','
   csv_field "${REFERENCE_ONLY_JAVA_FILES}"; printf ','
   csv_field "${GENERATED_ONLY_JAVA_FILES}"; printf ','
   csv_field "${REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT}"; printf ','
@@ -858,6 +917,7 @@ write_source_diff_report \
   csv_field "${GENERATED_ONLY_ORIGINAL_CLASS_PRESENT}"; printf ','
   csv_field "${GENERATED_ONLY_ORIGINAL_CLASS_ABSENT}"; printf ','
   csv_field "${SOURCE_DIFF_REPORT}"; printf ','
+  csv_field "${SOURCE_CONTENT_DIFF_REPORT}"; printf ','
   csv_field "${package_record_exit_code}"; printf ','
   csv_field "${package_record_verification_summary}"; printf ','
   csv_field "${package_record_verification_failure_type}"; printf ','
@@ -959,6 +1019,8 @@ write_source_diff_report \
   printf '%s\n' "- Reference project: \`${OTC_ADMIN_REFERENCE_PROJECT}\`"
   printf '%s\n' "- Reference Java files: \`${REFERENCE_JAVA_FILES}\`"
   printf '%s\n\n' "- Generated Java files: \`${GENERATED_JAVA_FILES}\`"
+  printf '%s\n' "- Shared Java files: \`${SHARED_JAVA_FILES}\`"
+  printf '%s\n' "- Shared Java files with content differences: \`${SHARED_JAVA_CONTENT_DIFF_FILES}\`"
   printf '%s\n' "- Reference-only Java files: \`${REFERENCE_ONLY_JAVA_FILES}\`"
   printf '%s\n' "- Generated-only Java files: \`${GENERATED_ONLY_JAVA_FILES}\`"
   printf '%s\n' "- Reference-only Java files with original JAR class: \`${REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT}\`"
@@ -1054,6 +1116,7 @@ write_source_diff_report \
   printf '%s\n' "- byte-exact project: \`${byte_exact_project_dir}\`"
   printf '%s\n' "- byte-exact artifact: \`${byte_exact_artifact_path}\`"
   printf '%s\n' "- Source diff: \`${SOURCE_DIFF_REPORT}\`"
+  printf '%s\n' "- Source content diff: \`${SOURCE_CONTENT_DIFF_REPORT}\`"
   printf '%s\n' "- CSV: \`${CSV_REPORT}\`"
 } > "${MD_REPORT}"
 
