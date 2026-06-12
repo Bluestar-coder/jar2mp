@@ -35,6 +35,8 @@ Environment:
       Maven executable. Defaults to mvn, or IntelliJ IDEA's bundled Maven when mvn is not on PATH.
   JAVA_CMD
       Java executable. Defaults to JAVA_HOME/bin/java when JAVA_HOME is set, otherwise java.
+  JAR_CMD
+      jar executable used to inspect original JAR entries. Defaults to JAVA_CMD's sibling jar, then PATH jar.
 
 The script runs both byte-level package restoration paths:
   java -jar jar2mp.jar --restore-package-records --verify-build ...
@@ -47,8 +49,8 @@ Reports:
   target/otc-admin-sample/report/package-record.cli.log
   target/otc-admin-sample/report/byte-exact.cli.log
 
-The source diff report lists reference-only Java files and generated-only Java files
-when OTC_ADMIN_REFERENCE_PROJECT is present.
+The source diff report lists reference-only Java files, generated-only Java files,
+and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
 EOF
 }
 
@@ -98,6 +100,24 @@ resolve_java() {
     return
   fi
   printf '%s\n' "java"
+}
+
+resolve_jar_tool() {
+  if [[ -n "${JAR_CMD:-}" ]]; then
+    printf '%s\n' "${JAR_CMD}"
+    return
+  fi
+  local java_dir
+  java_dir="$(dirname "${JAVA_BIN}")"
+  if [[ -x "${java_dir}/jar" ]]; then
+    printf '%s\n' "${java_dir}/jar"
+    return
+  fi
+  if command -v jar >/dev/null 2>&1; then
+    command -v jar
+    return
+  fi
+  printf '%s\n' ""
 }
 
 markdown_field() {
@@ -181,6 +201,24 @@ count_file_lines() {
   wc -l < "${file}" | tr -d '[:space:]'
 }
 
+count_present_classes() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    printf '%s\n' "missing"
+    return
+  fi
+  awk -F '\t' '$2 != "absent" { count++ } END { print count + 0 }' "${file}"
+}
+
+count_absent_classes() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    printf '%s\n' "missing"
+    return
+  fi
+  awk -F '\t' '$2 == "absent" { count++ } END { print count + 0 }' "${file}"
+}
+
 shasum256() {
   local file="$1"
   if [[ ! -f "${file}" ]]; then
@@ -231,18 +269,81 @@ set_var() {
   printf -v "$1" '%s' "$2"
 }
 
+write_original_jar_entries() {
+  local original_jar="$1"
+  local entries_file="$2"
+  local jar_tool
+  jar_tool="$(resolve_jar_tool)"
+
+  if [[ -n "${jar_tool}" ]]; then
+    "${jar_tool}" tf "${original_jar}" > "${entries_file}"
+    return
+  fi
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -Z1 "${original_jar}" > "${entries_file}"
+    return
+  fi
+  : > "${entries_file}"
+  return 1
+}
+
+write_class_presence_list() {
+  local java_list="$1"
+  local entries_file="$2"
+  local presence_file="$3"
+  : > "${presence_file}"
+  if [[ ! -f "${java_list}" ]]; then
+    return
+  fi
+  while IFS= read -r java_file; do
+    [[ -z "${java_file}" ]] && continue
+    local class_path="${java_file%.java}.class"
+    local found="absent"
+    local candidate
+    for candidate in "${class_path}" "BOOT-INF/classes/${class_path}" "WEB-INF/classes/${class_path}"; do
+      if [[ -f "${entries_file}" ]] && grep -Fxq "${candidate}" "${entries_file}"; then
+        found="${candidate}"
+        break
+      fi
+    done
+    printf '%s\t%s\n' "${java_file}" "${found}" >> "${presence_file}"
+  done < "${java_list}"
+}
+
+write_presence_table() {
+  local title="$1"
+  local count="$2"
+  local presence_file="$3"
+  printf '## %s\n\n' "${title}"
+  if [[ "${count}" == "0" ]]; then
+    printf 'None\n\n'
+    return
+  fi
+  printf '| Java file | Original JAR class presence |\n'
+  printf '| --- | --- |\n'
+  awk -F '\t' '{ printf "| `%s` | `%s` |\n", $1, $2 }' "${presence_file}"
+  printf '\n'
+}
+
 write_source_diff_report() {
   local generated_dir="$1"
   local reference_dir="$2"
   local report="$3"
+  local entries_file="$4"
   local reference_list="${REPORT_DIR}/.reference-java-files"
   local generated_list="${REPORT_DIR}/.generated-java-files"
   local reference_only="${REPORT_DIR}/.reference-only-java-files"
   local generated_only="${REPORT_DIR}/.generated-only-java-files"
+  local reference_only_presence="${REPORT_DIR}/.reference-only-class-presence"
+  local generated_only_presence="${REPORT_DIR}/.generated-only-class-presence"
 
   if [[ ! -d "${generated_dir}" || ! -d "${reference_dir}" ]]; then
     set_var "REFERENCE_ONLY_JAVA_FILES" "missing"
     set_var "GENERATED_ONLY_JAVA_FILES" "missing"
+    set_var "REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT" "missing"
+    set_var "REFERENCE_ONLY_ORIGINAL_CLASS_ABSENT" "missing"
+    set_var "GENERATED_ONLY_ORIGINAL_CLASS_PRESENT" "missing"
+    set_var "GENERATED_ONLY_ORIGINAL_CLASS_ABSENT" "missing"
     {
       printf '# OTC Admin Source File Diff\n\n'
       printf 'Source diff unavailable.\n\n'
@@ -259,31 +360,30 @@ write_source_diff_report() {
 
   set_var "REFERENCE_ONLY_JAVA_FILES" "$(count_file_lines "${reference_only}")"
   set_var "GENERATED_ONLY_JAVA_FILES" "$(count_file_lines "${generated_only}")"
+  write_class_presence_list "${reference_only}" "${entries_file}" "${reference_only_presence}"
+  write_class_presence_list "${generated_only}" "${entries_file}" "${generated_only_presence}"
+  set_var "REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT" "$(count_present_classes "${reference_only_presence}")"
+  set_var "REFERENCE_ONLY_ORIGINAL_CLASS_ABSENT" "$(count_absent_classes "${reference_only_presence}")"
+  set_var "GENERATED_ONLY_ORIGINAL_CLASS_PRESENT" "$(count_present_classes "${generated_only_presence}")"
+  set_var "GENERATED_ONLY_ORIGINAL_CLASS_ABSENT" "$(count_absent_classes "${generated_only_presence}")"
 
   {
     printf '# OTC Admin Source File Diff\n\n'
     printf '%s\n' "- Generated source dir: \`${generated_dir}\`"
     printf '%s\n' "- Reference source dir: \`${reference_dir}\`"
     printf '%s\n' "- Reference-only Java files: \`${REFERENCE_ONLY_JAVA_FILES}\`"
-    printf '%s\n\n' "- Generated-only Java files: \`${GENERATED_ONLY_JAVA_FILES}\`"
+    printf '%s\n' "- Generated-only Java files: \`${GENERATED_ONLY_JAVA_FILES}\`"
+    printf '%s\n' "- Reference-only Java files with original JAR class: \`${REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT}\`"
+    printf '%s\n' "- Reference-only Java files absent from original JAR classes: \`${REFERENCE_ONLY_ORIGINAL_CLASS_ABSENT}\`"
+    printf '%s\n' "- Generated-only Java files with original JAR class: \`${GENERATED_ONLY_ORIGINAL_CLASS_PRESENT}\`"
+    printf '%s\n\n' "- Generated-only Java files absent from original JAR classes: \`${GENERATED_ONLY_ORIGINAL_CLASS_ABSENT}\`"
 
-    printf '## Reference-only Java files\n\n'
-    if [[ "${REFERENCE_ONLY_JAVA_FILES}" == "0" ]]; then
-      printf 'None\n\n'
-    else
-      sed 's#^#- #' "${reference_only}"
-      printf '\n'
-    fi
-
-    printf '## Generated-only Java files\n\n'
-    if [[ "${GENERATED_ONLY_JAVA_FILES}" == "0" ]]; then
-      printf 'None\n'
-    else
-      sed 's#^#- #' "${generated_only}"
-    fi
+    write_presence_table "Reference-only Java files" "${REFERENCE_ONLY_JAVA_FILES}" "${reference_only_presence}"
+    write_presence_table "Generated-only Java files" "${GENERATED_ONLY_JAVA_FILES}" "${generated_only_presence}"
   } > "${report}"
 
-  rm -f "${reference_list}" "${generated_list}" "${reference_only}" "${generated_only}"
+  rm -f "${reference_list}" "${generated_list}" "${reference_only}" "${generated_only}" \
+    "${reference_only_presence}" "${generated_only_presence}"
 }
 
 run_restore_mode() {
@@ -338,12 +438,14 @@ require_file() {
 
 MVN_CMD="$(resolve_maven)"
 JAVA_BIN="$(resolve_java)"
+ORIGINAL_JAR_ENTRIES="${REPORT_DIR}/.original-jar-entries"
 ORIGINAL_SHA256="$(shasum256 "${OTC_ADMIN_JAR}")"
 
 require_file "${OTC_ADMIN_JAR}" "OTC admin sample JAR"
 
 rm -rf "${RESTORE_DIR}" "${REPORT_DIR}"
 mkdir -p "${RESTORE_DIR}" "${REPORT_DIR}"
+write_original_jar_entries "${OTC_ADMIN_JAR}" "${ORIGINAL_JAR_ENTRIES}"
 
 if [[ "${BUILD_JAR2MP}" != "0" ]]; then
   log "Building jar2mp with ${MVN_CMD}"
@@ -369,10 +471,11 @@ SOURCE_DIFF_REPORT="${REPORT_DIR}/otc-admin-source-diff.txt"
 write_source_diff_report \
   "${package_record_project_dir}/src/main/java" \
   "${OTC_ADMIN_REFERENCE_PROJECT}/src/main/java" \
-  "${SOURCE_DIFF_REPORT}"
+  "${SOURCE_DIFF_REPORT}" \
+  "${ORIGINAL_JAR_ENTRIES}"
 
 {
-  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_exact,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_exact,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_project\n'
+  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_exact,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_exact,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_project\n'
   csv_field "otc-admin"; printf ','
   csv_field "${OTC_ADMIN_JAR}"; printf ','
   csv_field "${JAR_SIZE_BYTES}"; printf ','
@@ -382,6 +485,10 @@ write_source_diff_report \
   csv_field "${GENERATED_JAVA_FILES}"; printf ','
   csv_field "${REFERENCE_ONLY_JAVA_FILES}"; printf ','
   csv_field "${GENERATED_ONLY_JAVA_FILES}"; printf ','
+  csv_field "${REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT}"; printf ','
+  csv_field "${REFERENCE_ONLY_ORIGINAL_CLASS_ABSENT}"; printf ','
+  csv_field "${GENERATED_ONLY_ORIGINAL_CLASS_PRESENT}"; printf ','
+  csv_field "${GENERATED_ONLY_ORIGINAL_CLASS_ABSENT}"; printf ','
   csv_field "${SOURCE_DIFF_REPORT}"; printf ','
   csv_field "${package_record_exit_code}"; printf ','
   csv_field "${package_record_verification_summary}"; printf ','
@@ -415,7 +522,11 @@ write_source_diff_report \
   printf '%s\n' "- Reference Java files: \`${REFERENCE_JAVA_FILES}\`"
   printf '%s\n\n' "- Generated Java files: \`${GENERATED_JAVA_FILES}\`"
   printf '%s\n' "- Reference-only Java files: \`${REFERENCE_ONLY_JAVA_FILES}\`"
-  printf '%s\n\n' "- Generated-only Java files: \`${GENERATED_ONLY_JAVA_FILES}\`"
+  printf '%s\n' "- Generated-only Java files: \`${GENERATED_ONLY_JAVA_FILES}\`"
+  printf '%s\n' "- Reference-only Java files with original JAR class: \`${REFERENCE_ONLY_ORIGINAL_CLASS_PRESENT}\`"
+  printf '%s\n' "- Reference-only Java files absent from original JAR classes: \`${REFERENCE_ONLY_ORIGINAL_CLASS_ABSENT}\`"
+  printf '%s\n' "- Generated-only Java files with original JAR class: \`${GENERATED_ONLY_ORIGINAL_CLASS_PRESENT}\`"
+  printf '%s\n\n' "- Generated-only Java files absent from original JAR classes: \`${GENERATED_ONLY_ORIGINAL_CLASS_ABSENT}\`"
   printf '| Mode | jar2mp exit | Verification | Failure type | Errors | Compile fallback classes | Decompile failures | Exact package | Rebuilt SHA-256 |\n'
   printf '| --- | ---: | --- | --- | ---: | ---: | ---: | --- | --- |\n'
   printf '| package-record | %s | %s | %s | %s | %s | %s | %s | `%s` |\n' \
