@@ -1,5 +1,7 @@
 package com.z0fsec.jar2mp.core;
 
+import java.util.Collections;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -45,12 +47,20 @@ public class SourcePostProcessor {
             "^\\?\\s+(?:super|extends)\\s+.+\\s+([A-Za-z_$][\\w$]*)$");
     private static final Pattern NUMERIC_ANONYMOUS_CONSTRUCTOR = Pattern.compile("new\\s+\\d+\\([^;\\n]*\\)");
     private static final Pattern NUMERIC_ANONYMOUS_CAST = Pattern.compile("\\(\\d+\\)\\s*null");
+    private static final Pattern SYNTHETIC_ENUM_SWITCH_SELECTOR = Pattern.compile(
+            "switch\\s*\\(\\s*1\\.(\\$SwitchMap\\$[A-Za-z0-9_$]+)\\[([\\s\\S]+?)\\.ordinal\\(\\)\\]\\s*\\)");
+    private static final Pattern SYNTHETIC_ENUM_SWITCH_CASE = Pattern.compile(
+            "(\\bcase\\s+)(\\d+)(\\s*(?::|->))");
 
     public String process(String source) {
         return process(source, null);
     }
 
     public String process(String source, String className) {
+        return process(source, className, Collections.emptyMap());
+    }
+
+    public String process(String source, String className, Map<String, Map<Integer, String>> switchCaseMaps) {
         if (source == null || source.isEmpty()) {
             return source;
         }
@@ -76,6 +86,7 @@ public class SourcePostProcessor {
         processed = castWildcardClassArrayElements(processed);
         processed = restoreGenericReturnLocalTypes(processed);
         processed = restoreDeferredAssignments(processed);
+        processed = restoreSyntheticEnumSwitches(processed, className, switchCaseMaps);
         processed = removeWildcardBoundsFromLambdaParameters(processed);
         processed = replaceUnavailableAnonymousInnerClasses(processed);
         processed = replaceNumericAnonymousClassFragments(processed);
@@ -468,6 +479,85 @@ public class SourcePostProcessor {
         return parameter;
     }
 
+    private String restoreSyntheticEnumSwitches(String source, String className,
+                                                Map<String, Map<Integer, String>> switchCaseMaps) {
+        if (!source.contains(".$SwitchMap$") || switchCaseMaps == null || switchCaseMaps.isEmpty()) {
+            return source;
+        }
+
+        Matcher matcher = SYNTHETIC_ENUM_SWITCH_SELECTOR.matcher(source);
+        StringBuilder builder = new StringBuilder(source.length());
+        int lastAppend = 0;
+        int searchFrom = 0;
+        while (matcher.find(searchFrom)) {
+            String fieldName = matcher.group(1);
+            Map<Integer, String> caseMap = findSwitchCaseMap(switchCaseMaps, className, fieldName);
+            if (caseMap == null || caseMap.isEmpty()) {
+                searchFrom = matcher.end();
+                continue;
+            }
+
+            int openBrace = findNextChar(source, '{', matcher.end());
+            int closeBrace = findMatchingBrace(source, openBrace);
+            if (openBrace < 0 || closeBrace < 0) {
+                searchFrom = matcher.end();
+                continue;
+            }
+
+            builder.append(source, lastAppend, matcher.start());
+            builder.append("switch (").append(matcher.group(2).trim()).append(")");
+            builder.append(replaceSyntheticEnumSwitchCases(source.substring(openBrace, closeBrace + 1), caseMap));
+            lastAppend = closeBrace + 1;
+            searchFrom = closeBrace + 1;
+        }
+        if (lastAppend == 0) {
+            return source;
+        }
+        builder.append(source, lastAppend, source.length());
+        return builder.toString();
+    }
+
+    private Map<Integer, String> findSwitchCaseMap(Map<String, Map<Integer, String>> switchCaseMaps,
+                                                   String className,
+                                                   String fieldName) {
+        if (className != null && !className.isEmpty()) {
+            Map<Integer, String> exact = switchCaseMaps.get(className + "#" + fieldName);
+            if (exact != null) {
+                return exact;
+            }
+            Map<Integer, String> sourceStyle = switchCaseMaps.get(className.replace('$', '.') + "#" + fieldName);
+            if (sourceStyle != null) {
+                return sourceStyle;
+            }
+        }
+        return switchCaseMaps.get(fieldName);
+    }
+
+    private String replaceSyntheticEnumSwitchCases(String switchBlock, Map<Integer, String> caseMap) {
+        Matcher matcher = SYNTHETIC_ENUM_SWITCH_CASE.matcher(switchBlock);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String enumConstant = caseMap.get(Integer.parseInt(matcher.group(2)));
+            if (enumConstant == null) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group()));
+            } else {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                        matcher.group(1) + enumConstant + matcher.group(3)));
+            }
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private int findNextChar(String source, char target, int startOffset) {
+        for (int i = Math.max(0, startOffset); i < source.length(); i++) {
+            if (source.charAt(i) == target) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private String replaceNumericAnonymousClassFragments(String source) {
         String processed = NUMERIC_ANONYMOUS_CAST.matcher(source).replaceAll("null");
         processed = NUMERIC_ANONYMOUS_CONSTRUCTOR.matcher(processed).replaceAll("null");
@@ -677,6 +767,59 @@ public class SourcePostProcessor {
             if (current == '(') {
                 depth++;
             } else if (current == ')') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+                if (depth < 0) {
+                    return -1;
+                }
+            }
+        }
+        return -1;
+    }
+
+    private int findMatchingBrace(String source, int openBrace) {
+        if (openBrace < 0 || openBrace >= source.length() || source.charAt(openBrace) != '{') {
+            return -1;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean inChar = false;
+        boolean escaping = false;
+        for (int i = openBrace; i < source.length(); i++) {
+            char current = source.charAt(i);
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (current == '\\') {
+                    escaping = true;
+                } else if (current == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inChar) {
+                if (escaping) {
+                    escaping = false;
+                } else if (current == '\\') {
+                    escaping = true;
+                } else if (current == '\'') {
+                    inChar = false;
+                }
+                continue;
+            }
+            if (current == '"') {
+                inString = true;
+                continue;
+            }
+            if (current == '\'') {
+                inChar = true;
+                continue;
+            }
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
                 depth--;
                 if (depth == 0) {
                     return i;

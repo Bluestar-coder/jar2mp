@@ -2,6 +2,8 @@ package com.z0fsec.jar2mp.core;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -605,5 +607,61 @@ class SourcePostProcessorTest {
 
         assertFalse(processed.contains("        break;\n"));
         assertTrue(processed.contains("while (true)"));
+    }
+
+    @Test
+    void restoresSyntheticEnumSwitchExpressionFromSwitchMap() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    String describe(GroupMemberLimitMsgType type) {\n"
+                        + "        return switch (1.$SwitchMap$com$ochat$group$enums$GroupMemberLimitMsgType[type.ordinal()]) {\n"
+                        + "            default -> throw new MatchException(null, null);\n"
+                        + "            case 1 -> \"expire\";\n"
+                        + "            case 2 -> \"balance\";\n"
+                        + "            case 3 -> \"renew\";\n"
+                        + "        };\n"
+                        + "    }\n"
+                        + "}\n",
+                "demo.Sample",
+                Map.of("$SwitchMap$com$ochat$group$enums$GroupMemberLimitMsgType",
+                        Map.of(1, "EXPIRATION_REMINDER", 2, "BALANCE_INSUFFICIENT", 3, "AUTO_RENEW_SUCCESS")));
+
+        assertTrue(processed.contains("return switch (type)"));
+        assertTrue(processed.contains("case EXPIRATION_REMINDER -> \"expire\";"));
+        assertTrue(processed.contains("case BALANCE_INSUFFICIENT -> \"balance\";"));
+        assertTrue(processed.contains("case AUTO_RENEW_SUCCESS -> \"renew\";"));
+        assertFalse(processed.contains("1.$SwitchMap"));
+        assertFalse(processed.contains("case 1 ->"));
+    }
+
+    @Test
+    void restoresSyntheticEnumSwitchStatementUsingOriginalCaseOrder() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void send(NoticeSendType type) {\n"
+                        + "        switch (1.$SwitchMap$otc$admin$share$enums$NoticeSendType[type.ordinal()]) {\n"
+                        + "            case 1:\n"
+                        + "                sendAll();\n"
+                        + "                break;\n"
+                        + "            case 2:\n"
+                        + "                sendSelected();\n"
+                        + "                break;\n"
+                        + "            case 5:\n"
+                        + "                sendNonAuth();\n"
+                        + "                break;\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}\n",
+                "demo.Sample",
+                Map.of("$SwitchMap$otc$admin$share$enums$NoticeSendType",
+                        Map.of(1, "ALL", 2, "SELECTED_USER", 5, "NON_AUTH")));
+
+        assertTrue(processed.contains("switch (type)"));
+        assertTrue(processed.contains("case ALL:"));
+        assertTrue(processed.contains("case SELECTED_USER:"));
+        assertTrue(processed.contains("case NON_AUTH:"));
+        assertFalse(processed.contains("case 1:"));
+        assertFalse(processed.contains("case 2:"));
+        assertFalse(processed.contains("case 5:"));
     }
 }
