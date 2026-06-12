@@ -163,6 +163,31 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesDecompilerDiagnosticComments() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "  /*\n"
+                        + "   * WARNING - void declaration\n"
+                        + "   * Enabled force condition propagation\n"
+                        + "   * Lifted jumps to return sites\n"
+                        + "   */\n"
+                        + "  Object run() {\n"
+                        + "    synchronized (this) {\n"
+                        + "      // ** MonitorExit[var0] (shouldn't be in output)\n"
+                        + "      return value();\n"
+                        + "    }\n"
+                        + "  }\n"
+                        + "}\n",
+                "Sample");
+
+        assertFalse(processed.contains("WARNING - void declaration"));
+        assertFalse(processed.contains("Enabled force condition propagation"));
+        assertFalse(processed.contains("Lifted jumps to return sites"));
+        assertFalse(processed.contains("MonitorExit"));
+        assertTrue(processed.contains("return value();"));
+    }
+
+    @Test
     void shortensQualifiedInnerClassInstanceCreation() {
         String processed = new SourcePostProcessor().process(
                 "class Sample {\n"
@@ -193,6 +218,280 @@ class SourcePostProcessorTest {
 
         assertTrue(processed.contains("ArrayList<Runnable> bookKeeping = new ArrayList<Runnable>();"));
         assertFalse(processed.contains("ArrayList<1>"));
+    }
+
+    @Test
+    void addsObjectElementTypeToRawListCastDeclarations() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    <T> T call(Command cmd) {\n"
+                        + "        List results = (List)cmd.parse();\n"
+                        + "        return Sample.firstElement(results);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<Object> results = (List<Object>)cmd.parse();"));
+        assertFalse(processed.contains("List results = (List)"));
+    }
+
+    @Test
+    void preservesRawListCastDeclarationsWhenElementTypeIsUnknown() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(Map<Object, ArrayList<String>> done, Object key) {\n"
+                        + "        List aliases = (List)done.get(key);\n"
+                        + "        aliases.add(\"name\");\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List aliases = (List)done.get(key);"));
+        assertFalse(processed.contains("List<Object> aliases"));
+    }
+
+    @Test
+    void widensExecutionExceptionCauseLocalsToException() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(ExecutionException ex) {\n"
+                        + "        ExecutionException cause = ex.getCause() instanceof Exception ? (Exception)ex.getCause() : ex;\n"
+                        + "        handle(cause);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(
+                "Exception cause = ex.getCause() instanceof Exception ? (Exception)ex.getCause() : ex;"));
+        assertFalse(processed.contains("ExecutionException cause ="));
+    }
+
+    @Test
+    void replacesAnsiTextSyntheticOuterReference() {
+        String processed = new SourcePostProcessor().process(
+                "class Help {\n"
+                        + "    static ColorScheme defaultColorScheme(Ansi ansi) { return null; }\n"
+                        + "    enum Ansi {\n"
+                        + "        ON;\n"
+                        + "        public class Text {\n"
+                        + "            public Text(int maxLength) {\n"
+                        + "                this(maxLength, Help.defaultColorScheme(this$0));\n"
+                        + "            }\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("Help.defaultColorScheme(Ansi.this)"));
+        assertFalse(processed.contains("this$0"));
+    }
+
+    @Test
+    void hoistsForLoopCounterWhenReferencedByLaterLoop() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(Capacity capacity) {\n"
+                        + "        int i;\n"
+                        + "        for (int done = 1; done < capacity.min; ++done) {\n"
+                        + "            use(done);\n"
+                        + "        }\n"
+                        + "        for (i = done; i < capacity.max; ++i) {\n"
+                        + "            use(i);\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("int done;\n        for (done = 1; done < capacity.min; ++done)"));
+        assertFalse(processed.contains("for (int done = 1;"));
+    }
+
+    @Test
+    void removesUndefinedGenericArrayCastFromToArrayArgument() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    Text[][] run(ArrayList<Text[]> result) {\n"
+                        + "        return (Text[][])result.toArray((T[])new Text[result.size()][]);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("return (Text[][])result.toArray(new Text[result.size()][]);"));
+        assertFalse(processed.contains("(T[])new"));
+    }
+
+    @Test
+    void castsClassWildcardForEnumGenericFactories() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    Object run(Class<?> type, Class<?>[] elementType, String value) {\n"
+                        + "        EnumSet<?> enumSet = EnumSet.noneOf(elementType[0]);\n"
+                        + "        if (value == null) return enumSet;\n"
+                        + "        return Enum.valueOf(type, value);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("EnumSet.noneOf((Class) elementType[0])"));
+        assertTrue(processed.contains("return (Collection<Object>) enumSet;"));
+        assertTrue(processed.contains("Enum.valueOf((Class) type, value)"));
+    }
+
+    @Test
+    void restoresGenericDefaultExceptionHandlerConstruction() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    public <R> R parseWithHandler(IParseResultHandler2<R> handler, String[] args) {\n"
+                        + "        return this.parseWithHandlers(handler, new DefaultExceptionHandler(), args);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("new DefaultExceptionHandler<R>()"));
+        assertFalse(processed.contains("new DefaultExceptionHandler(),"));
+    }
+
+    @Test
+    void widensRegexTransformerConditionalsToInterfaceType() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(Option option) {\n"
+                        + "        RegexTransformer trans = option.commandSpec == null ? RegexTransformer.createDefault() : option.commandSpec.negatableOptionTransformer();\n"
+                        + "        trans.makeSynopsis(option.shortestName(), option.commandSpec);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("INegatableOptionTransformer trans = option.commandSpec == null"));
+        assertFalse(processed.contains("RegexTransformer trans ="));
+    }
+
+    @Test
+    void restoresPositionalParamSpecListLocals() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(Model.ArgSpec argSpec, List<Model.PositionalParamSpec> positionals) {\n"
+                        + "        List<Object> missingList = Collections.emptyList();\n"
+                        + "        if (argSpec.isPositional()) {\n"
+                        + "            missingList = positionals.subList(0, positionals.size());\n"
+                        + "        }\n"
+                        + "        createMissingParameterMessage(argSpec, missingList);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<Model.PositionalParamSpec> missingList = Collections.emptyList();"));
+        assertFalse(processed.contains("List<Object> missingList"));
+    }
+
+    @Test
+    void restoresWildcardClassLocalsForReflectionTraversal() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(UserObject userObject) {\n"
+                        + "        Class<Object> cls;\n"
+                        + "        Class<Object> clazz = cls = userObject.getType();\n"
+                        + "        Stack<Class> hierarchy = new Stack<Class>();\n"
+                        + "        for (cls = userObject.getType(); cls != null; cls = cls.getSuperclass()) {\n"
+                        + "            hierarchy.add(cls);\n"
+                        + "        }\n"
+                        + "        cls = (Class)hierarchy.pop();\n"
+                        + "        Command cmd = cls.getAnnotation(Command.class);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("Class<?> cls;"));
+        assertTrue(processed.contains("Class<?> clazz = cls = userObject.getType();"));
+        assertTrue(processed.contains("Stack<Class<?>> hierarchy = new Stack<Class<?>>();"));
+        assertTrue(processed.contains("cls = hierarchy.pop();"));
+        assertFalse(processed.contains("Class<Object>"));
+        assertFalse(processed.contains("(Class)hierarchy.pop()"));
+    }
+
+    @Test
+    void castsWildcardClassArrayElementsAddedToRawClassLists() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(List<Class> result, Class<?>[] aux) {\n"
+                        + "        result.add(aux[0]);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("result.add((Class) aux[0]);"));
+        assertFalse(processed.contains("result.add(aux[0]);"));
+    }
+
+    @Test
+    void restoresGenericReturnLocalTypeForReturnedObjectVariables() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample<K, V> {\n"
+                        + "    public V put(K key, V value) {\n"
+                        + "        Object removedValue = this.targetMap.remove(key);\n"
+                        + "        this.targetMap.put(key, value);\n"
+                        + "        return removedValue;\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("V removedValue = this.targetMap.remove(key);"));
+        assertFalse(processed.contains("Object removedValue"));
+    }
+
+    @Test
+    void splitsMapPutKeyAssignmentBeforeUse() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(Map<String, Integer> m, String sequence, int i, int degree) {\n"
+                        + "        String gram;\n"
+                        + "        m.put(gram, 1 + (m.containsKey(gram = sequence.substring(i, i + degree)) ? (Integer)m.get(gram) : 0));\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("String gram = sequence.substring(i, i + degree);\n"
+                + "        m.put(gram, 1 + (m.containsKey(gram) ? (Integer)m.get(gram) : 0));"));
+        assertFalse(processed.contains("String gram;\n"));
+    }
+
+    @Test
+    void restoresNestedStringConditionalAssignments() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    String get(String key, CommandSpec commandSpec) {\n"
+                        + "        String result;\n"
+                        + "        String string = \"COMMAND-NAME\".equals(key) ? commandSpec.name() : (result = \"ROOT-COMMAND-NAME\".equals(key) ? commandSpec.root().name() : null);\n"
+                        + "        return result;\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("String result = \"COMMAND-NAME\".equals(key) ? commandSpec.name() : (\"ROOT-COMMAND-NAME\".equals(key) ? commandSpec.root().name() : null);"));
+        assertFalse(processed.contains("String string ="));
+    }
+
+    @Test
+    void restoresNestedIntConditionalAssignments() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    int compareTo(Range other) {\n"
+                        + "        int result;\n"
+                        + "        int n = this.anchor() < other.anchor() ? -1 : (result = this.anchor() == other.anchor() ? 0 : 1);\n"
+                        + "        if (result == 0) {\n"
+                        + "            int n2 = this.max < other.max ? -1 : (result = this.max == other.max ? 0 : 1);\n"
+                        + "        }\n"
+                        + "        return result;\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("int result = this.anchor() < other.anchor() ? -1 : (this.anchor() == other.anchor() ? 0 : 1);"));
+        assertTrue(processed.contains("result = this.max < other.max ? -1 : (this.max == other.max ? 0 : 1);"));
+        assertFalse(processed.contains("int n ="));
+        assertFalse(processed.contains("int n2 ="));
+    }
+
+    @Test
+    void restoresNestedIntConditionalAssignmentsAfterGuardBlocks() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    int compareTo(Range other) {\n"
+                        + "        int result;\n"
+                        + "        if (same(other)) {\n"
+                        + "            return 0;\n"
+                        + "        }\n"
+                        + "        int n = this.anchor() < other.anchor() ? -1 : (result = this.anchor() == other.anchor() ? 0 : 1);\n"
+                        + "        return result;\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("result = this.anchor() < other.anchor() ? -1 : (this.anchor() == other.anchor() ? 0 : 1);"));
+        assertFalse(processed.contains("int n ="));
     }
 
     @Test

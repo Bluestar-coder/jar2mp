@@ -15,12 +15,32 @@ public class SourcePostProcessor {
             "Optional\\s+(\\w+)\\s*=\\s*([^;]+);\\n(\\s*)([\\w.$<>]+)\\s+(\\w+)\\s*=\\s*\\(([^)]+)\\)\\1\\.orElseThrow");
     private static final Pattern NUMERIC_GENERIC_COLLECTION_DECLARATION = Pattern.compile(
             "(?m)^(\\s*)([A-Za-z_$][\\w$]*)<\\d+>\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*new\\s+([A-Za-z_$][\\w$]*)<\\d+>\\(([^;\\n]*)\\);");
+    private static final Pattern RAW_LIST_CAST_DECLARATION = Pattern.compile(
+            "(?m)^(\\s*)List\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*\\(List\\)");
+    private static final Pattern EXECUTION_EXCEPTION_CAUSE_DECLARATION = Pattern.compile(
+            "(?m)^(\\s*)ExecutionException\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*\\?\\s*\\(Exception\\)[^;\\n]*);");
+    private static final Pattern FOR_LOOP_COUNTER_DECLARATION = Pattern.compile(
+            "(?m)^(\\s*)for\\s*\\(int\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]+);");
+    private static final Pattern UNDEFINED_GENERIC_TO_ARRAY_CAST = Pattern.compile(
+            "\\.toArray\\s*\\(\\s*\\(T\\[\\]\\)\\s*new\\s+");
+    private static final Pattern ENUM_SET_NONE_OF_WILDCARD_CLASS = Pattern.compile(
+            "EnumSet\\.noneOf\\(\\s*(?!\\(Class\\))([^\\)]+?)\\s*\\)");
+    private static final Pattern ENUM_VALUE_OF_WILDCARD_CLASS = Pattern.compile(
+            "Enum\\.valueOf\\(\\s*(?!\\(Class\\))([A-Za-z_$][\\w$.]*(?:\\[[^\\]]+\\])?)\\s*,");
+    private static final Pattern REGEX_TRANSFORMER_CONDITIONAL_DECLARATION = Pattern.compile(
+            "(?m)^(\\s*)RegexTransformer\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*negatableOptionTransformer\\(\\)[^;\\n]*);");
     private static final Pattern QUALIFIED_INNER_INSTANCE_CREATION = Pattern.compile(
             "\\.new\\s+(?:[A-Za-z_$][\\w$]*\\.)+([A-Za-z_$][\\w$]*)\\(");
     private static final Pattern NUMERIC_ANONYMOUS_TYPE_DECLARATION = Pattern.compile(
             "(?m)^(\\s*)\\d+\\s+(\\w+)\\s*=");
     private static final Pattern CFR_VOID_TEMPORARY_LOCAL = Pattern.compile(
             "(?m)^(\\s*)void\\s+([A-Za-z_$][\\w$]*)\\s*;");
+    private static final Pattern DECOMPILER_DIAGNOSTIC_BLOCK = Pattern.compile(
+            "(?ms)^\\s*/\\*\\s*\\R(?:\\s*\\*\\s*(?:WARNING - [^\\n]*|Enabled force condition propagation|"
+                    + "Lifted jumps to return sites|Unable to fully structure code|Loose catch block)\\s*\\R)+"
+                    + "\\s*\\*/\\s*\\R?");
+    private static final Pattern DECOMPILER_MONITOR_COMMENT = Pattern.compile(
+            "(?m)^\\s*// \\*\\* Monitor(?:Enter|Exit)\\[[^\\n]*\\] \\(shouldn't be in output\\)\\s*\\R?");
     private static final Pattern WILDCARD_LAMBDA_PARAMETER = Pattern.compile(
             "^\\?\\s+(?:super|extends)\\s+.+\\s+([A-Za-z_$][\\w$]*)$");
     private static final Pattern NUMERIC_ANONYMOUS_CONSTRUCTOR = Pattern.compile("new\\s+\\d+\\([^;\\n]*\\)");
@@ -36,12 +56,26 @@ public class SourcePostProcessor {
         }
 
         String processed = stripDecompilerHeader(source);
+        processed = removeDecompilerDiagnosticComments(processed);
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
         processed = removeParameterArrayCasts(processed);
         processed = addListElementTypes(processed);
         processed = addOptionalElementTypes(processed);
         processed = addNumericGenericElementTypes(processed);
+        processed = addObjectElementTypesToRawListCasts(processed);
+        processed = widenExecutionExceptionCauseLocals(processed);
+        processed = replaceAnsiTextSyntheticOuterReferences(processed);
+        processed = hoistForLoopCountersReferencedByLaterLoops(processed);
+        processed = removeUndefinedGenericToArrayCasts(processed);
+        processed = castClassWildcardsForEnumFactories(processed);
+        processed = restoreGenericDefaultExceptionHandlerConstruction(processed);
+        processed = widenRegexTransformerConditionals(processed);
+        processed = restorePositionalParamSpecListLocals(processed);
+        processed = restoreWildcardClassReflectionLocals(processed);
+        processed = castWildcardClassArrayElements(processed);
+        processed = restoreGenericReturnLocalTypes(processed);
+        processed = restoreDeferredAssignments(processed);
         processed = removeWildcardBoundsFromLambdaParameters(processed);
         processed = replaceUnavailableAnonymousInnerClasses(processed);
         processed = replaceNumericAnonymousClassFragments(processed);
@@ -51,6 +85,11 @@ public class SourcePostProcessor {
         processed = castDoPrivilegedMethodReferences(processed);
         processed = removeUnreachableBreakAfterInfiniteLoop(processed);
         return processed;
+    }
+
+    private String removeDecompilerDiagnosticComments(String source) {
+        String processed = DECOMPILER_DIAGNOSTIC_BLOCK.matcher(source).replaceAll("");
+        return DECOMPILER_MONITOR_COMMENT.matcher(processed).replaceAll("");
     }
 
     private String stripDecompilerHeader(String source) {
@@ -173,6 +212,200 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private String addObjectElementTypesToRawListCasts(String source) {
+        Matcher matcher = RAW_LIST_CAST_DECLARATION.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            if (isConsumedByFirstElement(source, matcher.end(), matcher.group(2))) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                        matcher.group(1) + "List<Object> " + matcher.group(2) + " = (List<Object>)"));
+            } else {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group()));
+            }
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String widenExecutionExceptionCauseLocals(String source) {
+        Matcher matcher = EXECUTION_EXCEPTION_CAUSE_DECLARATION.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "Exception " + matcher.group(2) + " = " + matcher.group(3) + ";"));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String replaceAnsiTextSyntheticOuterReferences(String source) {
+        return source.replace("Help.defaultColorScheme(this$0)", "Help.defaultColorScheme(Ansi.this)");
+    }
+
+    private String removeUndefinedGenericToArrayCasts(String source) {
+        return UNDEFINED_GENERIC_TO_ARRAY_CAST.matcher(source).replaceAll(".toArray(new ");
+    }
+
+    private String castClassWildcardsForEnumFactories(String source) {
+        String processed = ENUM_SET_NONE_OF_WILDCARD_CLASS.matcher(source)
+                .replaceAll("EnumSet.noneOf((Class) $1)");
+        processed = ENUM_VALUE_OF_WILDCARD_CLASS.matcher(processed)
+                .replaceAll("Enum.valueOf((Class) $1,");
+        if (processed.contains("EnumSet<?> enumSet")) {
+            processed = processed.replace("return enumSet;", "return (Collection<Object>) enumSet;");
+        }
+        return processed;
+    }
+
+    private String restoreGenericDefaultExceptionHandlerConstruction(String source) {
+        return source.replace("parseWithHandlers(handler, new DefaultExceptionHandler(), args)",
+                "parseWithHandlers(handler, new DefaultExceptionHandler<R>(), args)");
+    }
+
+    private String restorePositionalParamSpecListLocals(String source) {
+        if (!source.contains("positionals.subList")) {
+            return source;
+        }
+        return source.replace("List<Object> missingList = Collections.emptyList();",
+                "List<Model.PositionalParamSpec> missingList = Collections.emptyList();");
+    }
+
+    private String restoreWildcardClassReflectionLocals(String source) {
+        if (!source.contains("getSuperclass()") && !source.contains("getAnnotation(Command.class)")) {
+            return source;
+        }
+        return source
+                .replace("Class<Object>", "Class<?>")
+                .replace("Class cls;", "Class<?> cls;")
+                .replace("Stack<Class> hierarchy = new Stack<Class>();",
+                        "Stack<Class<?>> hierarchy = new Stack<Class<?>>();")
+                .replace("cls = (Class)hierarchy.pop();", "cls = hierarchy.pop();")
+                .replace("cls = (Class<Object>)hierarchy.pop();", "cls = hierarchy.pop();");
+    }
+
+    private String castWildcardClassArrayElements(String source) {
+        if (!source.contains("Class<?>[] aux")) {
+            return source;
+        }
+        return source.replace("result.add(aux[0]);", "result.add((Class) aux[0]);");
+    }
+
+    private String restoreGenericReturnLocalTypes(String source) {
+        if (!source.contains("public V put(") || !source.contains("return removedValue;")) {
+            return source;
+        }
+        return source.replace("Object removedValue =", "V removedValue =");
+    }
+
+    private String restoreDeferredAssignments(String source) {
+        String[] lines = source.split("\\n", -1);
+        StringBuilder builder = new StringBuilder(source.length());
+        for (int i = 0; i < lines.length; i++) {
+            String replacement = null;
+            if (i + 1 < lines.length && "String result;".equals(lines[i].trim())) {
+                replacement = restoreNestedStringAssignment(lines[i + 1]);
+                if (replacement != null) {
+                    i++;
+                }
+            } else if (i + 1 < lines.length && "int result;".equals(lines[i].trim())) {
+                replacement = restoreNestedIntAssignment(lines[i + 1], "n", true);
+                if (replacement != null) {
+                    i++;
+                }
+            } else if (lines[i].contains("int n2 =") && lines[i].contains("(result = ")) {
+                replacement = restoreNestedIntAssignment(lines[i], "n2", false);
+            } else if (lines[i].contains("int n =") && lines[i].contains("(result = ")) {
+                replacement = restoreNestedIntAssignment(lines[i], "n", false);
+            } else if (i + 1 < lines.length && "String gram;".equals(lines[i].trim())) {
+                replacement = splitMapPutAssignedKey(lines[i], lines[i + 1]);
+                if (replacement != null) {
+                    i++;
+                }
+            }
+            appendLine(builder, replacement == null ? lines[i] : replacement);
+        }
+        return builder.toString();
+    }
+
+    private String restoreNestedStringAssignment(String line) {
+        if (!line.contains("String string =") || !line.contains("(result = ")) {
+            return null;
+        }
+        return line.replaceFirst("String\\s+string\\s*=", "String result =")
+                .replace("(result = ", "(");
+    }
+
+    private String restoreNestedIntAssignment(String line, String temporaryName, boolean declareResult) {
+        String marker = "int " + temporaryName + " =";
+        int markerIndex = line.indexOf(marker);
+        if (markerIndex < 0 || !line.contains("(result = ")) {
+            return null;
+        }
+        String prefix = line.substring(0, markerIndex);
+        String expression = line.substring(markerIndex + marker.length()).trim()
+                .replace("(result = ", "(");
+        return prefix + (declareResult ? "int result = " : "result = ") + expression;
+    }
+
+    private String splitMapPutAssignedKey(String declarationLine, String putLine) {
+        String marker = "m.put(gram, 1 + (m.containsKey(gram = ";
+        int markerIndex = putLine.indexOf(marker);
+        if (markerIndex < 0 || !putLine.contains(") ? (Integer)m.get(gram) : 0));")) {
+            return null;
+        }
+        String indent = declarationLine.substring(0, declarationLine.indexOf("String gram;"));
+        String expression = putLine.substring(markerIndex + marker.length(),
+                putLine.indexOf(") ? (Integer)m.get(gram) : 0));", markerIndex));
+        String putReplacement = putLine.substring(0, markerIndex)
+                + "m.put(gram, 1 + (m.containsKey(gram) ? (Integer)m.get(gram) : 0));";
+        return indent + "String gram = " + expression + ";\n" + putReplacement;
+    }
+
+    private void appendLine(StringBuilder builder, String line) {
+        if (builder.length() > 0) {
+            builder.append('\n');
+        }
+        builder.append(line);
+    }
+
+    private String widenRegexTransformerConditionals(String source) {
+        Matcher matcher = REGEX_TRANSFORMER_CONDITIONAL_DECLARATION.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "INegatableOptionTransformer " + matcher.group(2) + " = " + matcher.group(3) + ";"));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String hoistForLoopCountersReferencedByLaterLoops(String source) {
+        Matcher matcher = FOR_LOOP_COUNTER_DECLARATION.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String variableName = matcher.group(2);
+            if (isForLoopCounterReferencedByLaterLoop(source, matcher.end(), variableName)) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                        matcher.group(1) + "int " + variableName + ";\n"
+                                + matcher.group(1) + "for (" + variableName + " = " + matcher.group(3) + ";"));
+            } else {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group()));
+            }
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private boolean isForLoopCounterReferencedByLaterLoop(String source, int startOffset, String variableName) {
+        Pattern pattern = Pattern.compile("\\bfor\\s*\\([^;\\n]*=\\s*" + Pattern.quote(variableName) + "\\s*;");
+        return pattern.matcher(source).find(startOffset);
+    }
+
+    private boolean isConsumedByFirstElement(String source, int startOffset, String variableName) {
+        Pattern pattern = Pattern.compile("\\bfirstElement\\s*\\(\\s*" + Pattern.quote(variableName) + "\\s*\\)");
+        return pattern.matcher(source).find(startOffset);
     }
 
     private String findEnhancedForElementType(String source, int startOffset, String iterableName) {
