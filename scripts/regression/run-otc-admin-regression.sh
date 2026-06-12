@@ -67,7 +67,7 @@ HIGH/MEDIUM method index, risk reason breakdown from each decompile-parity-repor
 the restoration score bucket breakdown from each restoration-score.md, and
 remaining gap summary plus gate status for build, source coverage, byte package, and runtime observation.
 When OTC_ADMIN_TRACE_RUNTIME=1, the summary includes runtime launch support,
-run status, and event count from each runtime-trace-report.md. The LocalVariableTable missing-name count is limited
+run status, failure message and failure cause, and event count from each runtime-trace-report.md. The LocalVariableTable missing-name count is limited
 to methods that need user parameter or local-variable names, excluding compiler-generated synthetic switch-map support
 classes, bridge methods, enum support methods, lambda deserialization support methods, outer-this constructors,
 and monitor temporaries. The source coverage gates
@@ -258,8 +258,18 @@ parse_runtime_field() {
     printf '%s\n' "${default_value}"
     return
   fi
+  local prefix="- ${label}: "
   local value
-  value="$(awk -v label="${label}" -F': ' '$0 ~ "^- " label ":" { print $2; exit }' "${report}" 2>/dev/null || true)"
+  value="$(
+    awk -v prefix="${prefix}" '
+      index($0, prefix) == 1 {
+        value = $0
+        sub(prefix, "", value)
+        print value
+        exit
+      }
+    ' "${report}" 2>/dev/null || true
+  )"
   value="${value//\`/}"
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
@@ -738,6 +748,8 @@ run_restore_mode() {
   set_var "${prefix}_verification_score" "$(parse_bucket_score "${score_report}" "verification")"
   set_var "${prefix}_runtime_launch_support" "$(parse_runtime_field "${runtime_report}" "Launch support" "not-run")"
   set_var "${prefix}_runtime_run_status" "$(parse_runtime_field "${runtime_report}" "Run status" "not-run")"
+  set_var "${prefix}_runtime_failure_message" "$(parse_runtime_field "${runtime_report}" "Failure message" "not-run")"
+  set_var "${prefix}_runtime_failure_cause" "$(parse_runtime_field "${runtime_report}" "Failure cause" "not-run")"
   set_var "${prefix}_runtime_events" "$(parse_runtime_field "${runtime_report}" "Total events" "not-run")"
   set_var "${prefix}_gap_count" "$(markdown_field "${gap_summary}" "Gap count" "missing")"
   set_var "${prefix}_gap_categories" "$(gap_category_summary "${gap_summary}" "missing")"
@@ -831,7 +843,7 @@ write_source_diff_report \
   "${ORIGINAL_JAR_ENTRIES}"
 
 {
-  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_overall_score,package_record_source_score,package_record_resource_score,package_record_runtime_score,package_record_runtime_launch_support,package_record_runtime_run_status,package_record_runtime_events,package_record_verification_score,package_record_gap_count,package_record_gap_categories,package_record_build_gate,package_record_source_coverage_gate,package_record_byte_package_gate,package_record_runtime_observation_gate,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_parity_risk_reasons,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_overall_score,byte_exact_source_score,byte_exact_resource_score,byte_exact_runtime_score,byte_exact_runtime_launch_support,byte_exact_runtime_run_status,byte_exact_runtime_events,byte_exact_verification_score,byte_exact_gap_count,byte_exact_gap_categories,byte_exact_build_gate,byte_exact_source_coverage_gate,byte_exact_byte_package_gate,byte_exact_runtime_observation_gate,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_parity_risk_reasons,byte_exact_project\n'
+  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_overall_score,package_record_source_score,package_record_resource_score,package_record_runtime_score,package_record_runtime_launch_support,package_record_runtime_run_status,package_record_runtime_failure_message,package_record_runtime_failure_cause,package_record_runtime_events,package_record_verification_score,package_record_gap_count,package_record_gap_categories,package_record_build_gate,package_record_source_coverage_gate,package_record_byte_package_gate,package_record_runtime_observation_gate,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_parity_risk_reasons,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_overall_score,byte_exact_source_score,byte_exact_resource_score,byte_exact_runtime_score,byte_exact_runtime_launch_support,byte_exact_runtime_run_status,byte_exact_runtime_failure_message,byte_exact_runtime_failure_cause,byte_exact_runtime_events,byte_exact_verification_score,byte_exact_gap_count,byte_exact_gap_categories,byte_exact_build_gate,byte_exact_source_coverage_gate,byte_exact_byte_package_gate,byte_exact_runtime_observation_gate,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_parity_risk_reasons,byte_exact_project\n'
   csv_field "otc-admin"; printf ','
   csv_field "${OTC_ADMIN_JAR}"; printf ','
   csv_field "${JAR_SIZE_BYTES}"; printf ','
@@ -858,6 +870,8 @@ write_source_diff_report \
   csv_field "${package_record_runtime_score}"; printf ','
   csv_field "${package_record_runtime_launch_support}"; printf ','
   csv_field "${package_record_runtime_run_status}"; printf ','
+  csv_field "${package_record_runtime_failure_message}"; printf ','
+  csv_field "${package_record_runtime_failure_cause}"; printf ','
   csv_field "${package_record_runtime_events}"; printf ','
   csv_field "${package_record_verification_score}"; printf ','
   csv_field "${package_record_gap_count}"; printf ','
@@ -902,6 +916,8 @@ write_source_diff_report \
   csv_field "${byte_exact_runtime_score}"; printf ','
   csv_field "${byte_exact_runtime_launch_support}"; printf ','
   csv_field "${byte_exact_runtime_run_status}"; printf ','
+  csv_field "${byte_exact_runtime_failure_message}"; printf ','
+  csv_field "${byte_exact_runtime_failure_cause}"; printf ','
   csv_field "${byte_exact_runtime_events}"; printf ','
   csv_field "${byte_exact_verification_score}"; printf ','
   csv_field "${byte_exact_gap_count}"; printf ','
@@ -992,6 +1008,13 @@ write_source_diff_report \
     "${byte_exact_byte_package_gate}" "${byte_exact_runtime_observation_gate}" \
     "${byte_exact_runtime_launch_support}" "${byte_exact_runtime_run_status}" \
     "${byte_exact_runtime_events}"
+  printf '## Runtime failure summary\n\n'
+  printf '| Mode | Failure message | Failure cause |\n'
+  printf '| --- | --- | --- |\n'
+  printf '| package-record | %s | %s |\n' \
+    "${package_record_runtime_failure_message}" "${package_record_runtime_failure_cause}"
+  printf '| byte-exact | %s | %s |\n\n' \
+    "${byte_exact_runtime_failure_message}" "${byte_exact_runtime_failure_cause}"
   printf '## Artifact fidelity details\n\n'
   printf '| Mode | Content entries match | Same class bytes | Different class bytes | Same nested libs | Different nested libs | Entry order same | ZIP metadata diff entries | Archive bytes same |\n'
   printf '| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |\n'
