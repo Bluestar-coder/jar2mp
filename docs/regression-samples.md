@@ -134,6 +134,7 @@ The script writes:
 
 - `target/otc-admin-sample/report/otc-admin-summary.md`
 - `target/otc-admin-sample/report/otc-admin-summary.csv`
+- `target/otc-admin-sample/report/otc-admin-source-diff.txt`
 - `target/otc-admin-sample/report/package-record.cli.log`
 - `target/otc-admin-sample/report/byte-exact.cli.log`
 - restored jar2mp projects under `target/otc-admin-sample/restored/`
@@ -143,4 +144,4 @@ The script runs two independent byte-level gates:
 - `--restore-package-records --verify-build` keeps the ordinary generated Maven project shape, then requires guarded package-record restoration to produce a byte-identical final package.
 - `--byte-exact-package --verify-build` runs the strict package-restoration path and requires the restored final package to be byte-identical to the original sample.
 
-The script exits non-zero unless both modes report `BUILD SUCCESS`, `Failure type: NONE`, `exact_match=true`, and a rebuilt SHA-256 equal to the original JAR SHA-256. The summary also records generated/reference Java file counts and current decompile-fallback counts, but those counts are reported as progress evidence rather than byte-exact gates.
+The script exits non-zero unless both modes report `BUILD SUCCESS`, `Failure type: NONE`, `exact_match=true`, and a rebuilt SHA-256 equal to the original JAR SHA-256. The summary also records generated/reference Java file counts, current decompile-fallback counts, and `reference-only` / `generated-only` source file lists, but those counts are reported as progress evidence rather than byte-exact gates.

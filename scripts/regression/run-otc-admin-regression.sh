@@ -43,8 +43,12 @@ The script runs both byte-level package restoration paths:
 Reports:
   target/otc-admin-sample/report/otc-admin-summary.csv
   target/otc-admin-sample/report/otc-admin-summary.md
+  target/otc-admin-sample/report/otc-admin-source-diff.txt
   target/otc-admin-sample/report/package-record.cli.log
   target/otc-admin-sample/report/byte-exact.cli.log
+
+The source diff report lists reference-only Java files and generated-only Java files
+when OTC_ADMIN_REFERENCE_PROJECT is present.
 EOF
 }
 
@@ -168,6 +172,15 @@ count_decompile_failures() {
   grep -c '^- Failed to decompile ' "${file}" || true
 }
 
+count_file_lines() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    printf '%s\n' "missing"
+    return
+  fi
+  wc -l < "${file}" | tr -d '[:space:]'
+}
+
 shasum256() {
   local file="$1"
   if [[ ! -f "${file}" ]]; then
@@ -216,6 +229,61 @@ restored_artifact_path() {
 
 set_var() {
   printf -v "$1" '%s' "$2"
+}
+
+write_source_diff_report() {
+  local generated_dir="$1"
+  local reference_dir="$2"
+  local report="$3"
+  local reference_list="${REPORT_DIR}/.reference-java-files"
+  local generated_list="${REPORT_DIR}/.generated-java-files"
+  local reference_only="${REPORT_DIR}/.reference-only-java-files"
+  local generated_only="${REPORT_DIR}/.generated-only-java-files"
+
+  if [[ ! -d "${generated_dir}" || ! -d "${reference_dir}" ]]; then
+    set_var "REFERENCE_ONLY_JAVA_FILES" "missing"
+    set_var "GENERATED_ONLY_JAVA_FILES" "missing"
+    {
+      printf '# OTC Admin Source File Diff\n\n'
+      printf 'Source diff unavailable.\n\n'
+      printf '%s\n' "- Generated source dir: \`${generated_dir}\`"
+      printf '%s\n' "- Reference source dir: \`${reference_dir}\`"
+    } > "${report}"
+    return
+  fi
+
+  (cd "${reference_dir}" && find . -type f -name '*.java' | sed 's#^\./##' | sort) > "${reference_list}"
+  (cd "${generated_dir}" && find . -type f -name '*.java' | sed 's#^\./##' | sort) > "${generated_list}"
+  comm -23 "${reference_list}" "${generated_list}" > "${reference_only}"
+  comm -13 "${reference_list}" "${generated_list}" > "${generated_only}"
+
+  set_var "REFERENCE_ONLY_JAVA_FILES" "$(count_file_lines "${reference_only}")"
+  set_var "GENERATED_ONLY_JAVA_FILES" "$(count_file_lines "${generated_only}")"
+
+  {
+    printf '# OTC Admin Source File Diff\n\n'
+    printf '%s\n' "- Generated source dir: \`${generated_dir}\`"
+    printf '%s\n' "- Reference source dir: \`${reference_dir}\`"
+    printf '%s\n' "- Reference-only Java files: \`${REFERENCE_ONLY_JAVA_FILES}\`"
+    printf '%s\n\n' "- Generated-only Java files: \`${GENERATED_ONLY_JAVA_FILES}\`"
+
+    printf '## Reference-only Java files\n\n'
+    if [[ "${REFERENCE_ONLY_JAVA_FILES}" == "0" ]]; then
+      printf 'None\n\n'
+    else
+      sed 's#^#- #' "${reference_only}"
+      printf '\n'
+    fi
+
+    printf '## Generated-only Java files\n\n'
+    if [[ "${GENERATED_ONLY_JAVA_FILES}" == "0" ]]; then
+      printf 'None\n'
+    else
+      sed 's#^#- #' "${generated_only}"
+    fi
+  } > "${report}"
+
+  rm -f "${reference_list}" "${generated_list}" "${reference_only}" "${generated_only}"
 }
 
 run_restore_mode() {
@@ -297,9 +365,14 @@ JAR_SIZE_BYTES="$(wc -c < "${OTC_ADMIN_JAR}" | tr -d '[:space:]')"
 
 CSV_REPORT="${REPORT_DIR}/otc-admin-summary.csv"
 MD_REPORT="${REPORT_DIR}/otc-admin-summary.md"
+SOURCE_DIFF_REPORT="${REPORT_DIR}/otc-admin-source-diff.txt"
+write_source_diff_report \
+  "${package_record_project_dir}/src/main/java" \
+  "${OTC_ADMIN_REFERENCE_PROJECT}/src/main/java" \
+  "${SOURCE_DIFF_REPORT}"
 
 {
-  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_exact,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_exact,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_project\n'
+  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_exact,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_exact,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_project\n'
   csv_field "otc-admin"; printf ','
   csv_field "${OTC_ADMIN_JAR}"; printf ','
   csv_field "${JAR_SIZE_BYTES}"; printf ','
@@ -307,6 +380,9 @@ MD_REPORT="${REPORT_DIR}/otc-admin-summary.md"
   csv_field "${OTC_ADMIN_REFERENCE_PROJECT}"; printf ','
   csv_field "${REFERENCE_JAVA_FILES}"; printf ','
   csv_field "${GENERATED_JAVA_FILES}"; printf ','
+  csv_field "${REFERENCE_ONLY_JAVA_FILES}"; printf ','
+  csv_field "${GENERATED_ONLY_JAVA_FILES}"; printf ','
+  csv_field "${SOURCE_DIFF_REPORT}"; printf ','
   csv_field "${package_record_exit_code}"; printf ','
   csv_field "${package_record_verification_summary}"; printf ','
   csv_field "${package_record_verification_failure_type}"; printf ','
@@ -338,6 +414,8 @@ MD_REPORT="${REPORT_DIR}/otc-admin-summary.md"
   printf '%s\n' "- Reference project: \`${OTC_ADMIN_REFERENCE_PROJECT}\`"
   printf '%s\n' "- Reference Java files: \`${REFERENCE_JAVA_FILES}\`"
   printf '%s\n\n' "- Generated Java files: \`${GENERATED_JAVA_FILES}\`"
+  printf '%s\n' "- Reference-only Java files: \`${REFERENCE_ONLY_JAVA_FILES}\`"
+  printf '%s\n\n' "- Generated-only Java files: \`${GENERATED_ONLY_JAVA_FILES}\`"
   printf '| Mode | jar2mp exit | Verification | Failure type | Errors | Compile fallback classes | Decompile failures | Exact package | Rebuilt SHA-256 |\n'
   printf '| --- | ---: | --- | --- | ---: | ---: | ---: | --- | --- |\n'
   printf '| package-record | %s | %s | %s | %s | %s | %s | %s | `%s` |\n' \
@@ -355,6 +433,7 @@ MD_REPORT="${REPORT_DIR}/otc-admin-summary.md"
   printf '%s\n' "- package-record artifact: \`${package_record_artifact_path}\`"
   printf '%s\n' "- byte-exact project: \`${byte_exact_project_dir}\`"
   printf '%s\n' "- byte-exact artifact: \`${byte_exact_artifact_path}\`"
+  printf '%s\n' "- Source diff: \`${SOURCE_DIFF_REPORT}\`"
   printf '%s\n' "- CSV: \`${CSV_REPORT}\`"
 } > "${MD_REPORT}"
 

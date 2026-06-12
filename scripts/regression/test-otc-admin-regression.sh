@@ -29,3 +29,5 @@ assert_contains "${help_output}" "--restore-package-records" "package-record mod
 assert_contains "${help_output}" "--byte-exact-package" "byte-exact mode"
 assert_contains "${help_output}" "otc-admin-summary.csv" "csv report"
 assert_contains "${help_output}" "otc-admin-summary.md" "markdown report"
+assert_contains "${help_output}" "otc-admin-source-diff.txt" "source diff report"
+assert_contains "${help_output}" "reference-only Java files" "source diff purpose"
