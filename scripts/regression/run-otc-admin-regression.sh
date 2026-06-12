@@ -342,6 +342,10 @@ classify_runtime_observation_gate() {
     printf '%s\n' "FAIL_STARTUP_FAILED_TIMEOUT"
     return
   fi
+  if [[ "${run_status}" == "STARTUP_FAILED_EXIT" ]]; then
+    printf '%s\n' "FAIL_STARTUP_FAILED_EXIT"
+    return
+  fi
   if [[ "${run_status}" == "EXIT_ZERO" ]]; then
     printf '%s\n' "WARN_EXIT_ZERO_SCORE_${runtime_score}"
     return

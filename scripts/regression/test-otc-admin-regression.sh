@@ -45,6 +45,7 @@ assert_contains "${script_source}" "byte_exact_byte_package_gate" "csv byte-exac
 assert_contains "${script_source}" "byte_exact_runtime_observation_gate" "csv byte-exact runtime observation gate column"
 assert_contains "${script_source}" "PASS_HEALTHY_TIMEOUT" "runtime healthy timeout observation status"
 assert_contains "${script_source}" "STARTUP_FAILED_TIMEOUT" "runtime startup failure observation status"
+assert_contains "${script_source}" "STARTUP_FAILED_EXIT" "runtime startup failure exit observation status"
 assert_contains "${script_source}" "WARN_STARTED_TIMEOUT" "runtime timeout observation status"
 assert_contains "${script_source}" "Gate status" "markdown gate status section"
 assert_contains "${script_source}" "Runtime observation" "markdown runtime observation gate header"
