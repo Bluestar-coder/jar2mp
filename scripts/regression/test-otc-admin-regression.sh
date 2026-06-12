@@ -34,3 +34,4 @@ assert_contains "${help_output}" "reference-only Java files" "source diff purpos
 assert_contains "${help_output}" "original JAR class presence" "source diff class presence"
 assert_contains "${help_output}" "class bytecode and ZIP metadata fidelity details" "artifact fidelity detail purpose"
 assert_contains "${help_output}" "decompile parity risk summary" "parity risk detail purpose"
+assert_contains "${help_output}" "source coverage gates" "parity source coverage gates"

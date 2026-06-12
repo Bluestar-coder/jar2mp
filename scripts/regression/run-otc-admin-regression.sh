@@ -53,7 +53,8 @@ The source diff report lists reference-only Java files, generated-only Java file
 and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
 The summary also includes class bytecode and ZIP metadata fidelity details from
 each artifact-fidelity-summary.csv, plus the decompile parity risk summary from
-each decompile-parity-report.md.
+each decompile-parity-report.md. The source coverage gates require zero class parse
+failures and zero missing-source methods in both modes.
 EOF
 }
 
@@ -705,6 +706,8 @@ check_gate "package-record archive bytes" "${package_record_archive_bytes_same}"
 check_gate "package-record original SHA" "${package_record_original_sha256}" "${ORIGINAL_SHA256}"
 check_gate "package-record rebuilt SHA" "${package_record_rebuilt_sha256}" "${ORIGINAL_SHA256}"
 check_gate "package-record artifact SHA" "${package_record_artifact_sha256}" "${ORIGINAL_SHA256}"
+check_gate "package-record parity parse failures" "${package_record_parity_parse_failures}" "0"
+check_gate "package-record parity missing-source methods" "${package_record_parity_missing_source_methods}" "0"
 
 check_gate "byte-exact jar2mp exit" "${byte_exact_exit_code}" "0"
 check_gate "byte-exact verification summary" "${byte_exact_verification_summary}" "BUILD SUCCESS"
@@ -719,6 +722,8 @@ check_gate "byte-exact archive bytes" "${byte_exact_archive_bytes_same}" "true"
 check_gate "byte-exact original SHA" "${byte_exact_original_sha256}" "${ORIGINAL_SHA256}"
 check_gate "byte-exact rebuilt SHA" "${byte_exact_rebuilt_sha256}" "${ORIGINAL_SHA256}"
 check_gate "byte-exact artifact SHA" "${byte_exact_artifact_sha256}" "${ORIGINAL_SHA256}"
+check_gate "byte-exact parity parse failures" "${byte_exact_parity_parse_failures}" "0"
+check_gate "byte-exact parity missing-source methods" "${byte_exact_parity_missing_source_methods}" "0"
 
 log "Summary written to ${MD_REPORT}"
 log "CSV written to ${CSV_REPORT}"
