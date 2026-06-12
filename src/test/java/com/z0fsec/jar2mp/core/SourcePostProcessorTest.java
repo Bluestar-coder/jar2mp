@@ -551,6 +551,88 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesWrapperCastAroundTypedLambdaQueryWrapper() {
+        String processed = new SourcePostProcessor().process(
+                "this.sysChannelSourceConfigService.list((Wrapper)new LambdaQueryWrapper<SysChannelSourceConfig>()"
+                        + ".orderByAsc(SysChannelSourceConfig::getChannelSourceId));\n");
+
+        assertTrue(processed.contains("list(new LambdaQueryWrapper<SysChannelSourceConfig>()"));
+        assertFalse(processed.contains("list((Wrapper)new LambdaQueryWrapper"));
+    }
+
+    @Test
+    void removesWrapperCastAfterLambdaQueryWrapperTypeRestoration() {
+        String processed = new SourcePostProcessor().process(
+                "this.sysChannelSourceConfigService.list((Wrapper)new LambdaQueryWrapper()"
+                        + ".orderByAsc(SysChannelSourceConfig::getChannelSourceId));\n");
+
+        assertTrue(processed.contains("list(new LambdaQueryWrapper<SysChannelSourceConfig>()"));
+        assertFalse(processed.contains("(Wrapper)new LambdaQueryWrapper"));
+    }
+
+    @Test
+    void restoresFilteredStreamResultListTypeFromSourceList() {
+        String processed = new SourcePostProcessor().process(
+                "List<User> userList;\n"
+                        + "List users = userList.stream().filter(e -> e.getUid() > 0)"
+                        + ".collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("List<User> users = userList.stream()"));
+    }
+
+    @Test
+    void restoresStreamMapNewExpressionResultType() {
+        String processed = new SourcePostProcessor().process(
+                "List<BaseFeeDTO> assistList = adFeeUpdateReqList.stream().map(adFeeUpdateReq -> "
+                        + "new BaseFee().setId(adFeeUpdateReq.getId())).collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("List<BaseFee> assistList = adFeeUpdateReqList.stream()"));
+    }
+
+    @Test
+    void restoresStreamMapNewExpressionResultTypeAfterFilter() {
+        String processed = new SourcePostProcessor().process(
+                "List assistList = userList.stream().filter(e -> ok(e)).map(user -> "
+                        + "new UserAssist().setUid(user.getUid())).collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("List<UserAssist> assistList = userList.stream()"));
+    }
+
+    @Test
+    void restoresRawArrayListTypeFromUidStreamArgument() {
+        String processed = new SourcePostProcessor().process(
+                "ArrayList removeBalanceFail = new ArrayList();\n"
+                        + "Lists.partition(userList, (int)100).stream().map(elist -> "
+                        + "this.userService.checkBalance(elist.stream().map(User::getUid)"
+                        + ".collect(Collectors.toList()), removeBalanceFail));\n");
+
+        assertTrue(processed.contains("List<Long> removeBalanceFail = new ArrayList<>();"));
+    }
+
+    @Test
+    void restoresRawArrayListTypeFromUidStreamMiddleArgument() {
+        String processed = new SourcePostProcessor().process(
+                "ArrayList removeBalanceFail = new ArrayList();\n"
+                        + "this.userService.getZhOtcBalanceDTO(elist.stream().map(User::getUid)"
+                        + ".collect(Collectors.toList()), removeBalanceFail, isCheckAll);\n");
+
+        assertTrue(processed.contains("List<Long> removeBalanceFail = new ArrayList<>();"));
+    }
+
+    @Test
+    void castsOptionalOrElseGetMapSupplierUsingMethodReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "private Map<Long, String> getUserMap(User user, List<Long> uidList) {\n"
+                        + "    return Optional.ofNullable(user).map(e -> (Map<Long, String>)"
+                        + "ImmutableMap.<Long, String>builder().put(e.getUid(), e.getIdentify()).build())"
+                        + ".orElseGet(() -> this.userService.listByIds((Collection)uidList).stream()"
+                        + ".collect(Collectors.toMap(User::getUid, User::getIdentify)));\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(".orElseGet(() -> (Map<Long, String>)this.userService.listByIds"));
+    }
+
+    @Test
     void restoresRawListTypeFromLaterElementCast() {
         String processed = new SourcePostProcessor().process(
                 "List userList;\n"

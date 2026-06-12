@@ -110,8 +110,10 @@ public class SourcePostProcessor {
         processed = removeGuavaListFactoryCasts(processed);
         processed = removeGuavaPartitionListCasts(processed);
         processed = unwrapSFunctionArraySelects(processed);
+        processed = removeMyBatisWrapperCasts(processed);
         processed = restoreStringListLocalsFromFactoryAssignments(processed);
         processed = addImmutableMapBuilderTypeArguments(processed);
+        processed = castOptionalOrElseGetMapSuppliers(processed);
         processed = removeRepeatedValidationAnnotations(processed);
         processed = addListElementTypes(processed);
         processed = addOptionalElementTypes(processed);
@@ -121,13 +123,18 @@ public class SourcePostProcessor {
         processed = restoreLambdaUpdateWrapperEntityTypes(processed);
         processed = restoreLambdaQueryChainWrapperEntityTypes(processed);
         processed = restoreLambdaUpdateChainWrapperEntityTypes(processed);
+        processed = removeMyBatisWrapperCasts(processed);
         processed = restoreLambdaQueryChainListElementTypes(processed);
         processed = restorePageInfoRowListElementTypes(processed);
         processed = restoreLocalTypesFromGenericMethodReturns(processed);
         processed = restorePageInfoLocalsFromPageDataReturnTypes(processed);
         processed = restoreListLocalsFromListReturnTypes(processed);
         processed = restoreListTypesFromStreamMapResults(processed);
+        processed = restoreStreamCollectListTypes(processed);
+        processed = restoreUidSideEffectListTypes(processed);
         processed = restoreRawListTypesFromElementUsage(processed);
+        processed = restoreStreamCollectListTypes(processed);
+        processed = restoreUidSideEffectListTypes(processed);
         processed = restoreStringObjectMapListTypes(processed);
         processed = restoreNestedListPartitionTypes(processed);
         processed = restoreRawListTypesFromEnhancedForUsage(processed);
@@ -661,6 +668,76 @@ public class SourcePostProcessor {
             }
         }
         return String.join("\n", lines);
+    }
+
+    private String restoreStreamCollectListTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> listElementTypes = new LinkedHashMap<>();
+        Pattern collectedFromTypedList = Pattern.compile("^(\\s*)List(?:\\s*<[^>]+>)?\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*=\\s*([A-Za-z_$][\\w$]*)\\.stream\\(\\)"
+                + "(?!\\.map\\()[^;\\n]*\\.collect\\(Collectors\\.toList\\(\\)\\);");
+        Pattern mappedNewType = Pattern.compile("^(\\s*)List(?:\\s*<[^>]+>)?\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*\\.stream\\(\\)[^;\\n]*\\.map\\([^;\\n]*->\\s*new\\s+"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)\\s*\\([^;\\n]*;)");
+        for (int i = 0; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                listElementTypes.clear();
+            }
+            Matcher declarationMatcher = TYPED_LIST_DECLARATION.matcher(lines[i]);
+            while (declarationMatcher.find()) {
+                listElementTypes.put(declarationMatcher.group(2), declarationMatcher.group(1));
+            }
+
+            Matcher newTypeMatcher = mappedNewType.matcher(lines[i]);
+            if (newTypeMatcher.find()) {
+                lines[i] = newTypeMatcher.replaceFirst(Matcher.quoteReplacement(
+                        newTypeMatcher.group(1) + "List<" + newTypeMatcher.group(4) + "> "
+                                + newTypeMatcher.group(2) + " = " + newTypeMatcher.group(3)));
+                continue;
+            }
+
+            Matcher collectMatcher = collectedFromTypedList.matcher(lines[i]);
+            if (collectMatcher.find()) {
+                String elementType = listElementTypes.get(collectMatcher.group(3));
+                if (elementType != null) {
+                    lines[i] = collectMatcher.replaceFirst(Matcher.quoteReplacement(
+                            collectMatcher.group(1) + "List<" + elementType + "> "
+                                    + collectMatcher.group(2) + " = " + collectMatcher.group(3)
+                                    + ".stream()" + lines[i].substring(collectMatcher.end(3) + ".stream()".length())));
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String restoreUidSideEffectListTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Pattern uidListArgument = Pattern.compile("\\.map\\(\\s*[A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*"
+                + "::getUid\\)[^;\\n]*?,\\s*([A-Za-z_$][\\w$]*)\\s*(?:,|\\))");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = uidListArgument.matcher(lines[i]);
+            while (matcher.find()) {
+                typePreviousRawArrayListDeclaration(lines, i, matcher.group(1), "Long");
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private void typePreviousRawArrayListDeclaration(String[] lines, int currentIndex, String listName,
+                                                     String elementType) {
+        Pattern declaration = Pattern.compile("\\bArrayList\\s+" + Pattern.quote(listName)
+                + "\\s*=\\s*new\\s+ArrayList\\s*\\(\\s*\\)\\s*;");
+        for (int i = currentIndex; i >= 0; i--) {
+            if (i != currentIndex && looksLikeMethodDeclaration(lines[i])) {
+                return;
+            }
+            Matcher matcher = declaration.matcher(lines[i]);
+            if (matcher.find()) {
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "List<" + elementType + "> " + listName + " = new ArrayList<>();"));
+                return;
+            }
+        }
     }
 
     private String inferStreamMapResultType(String ownerType, String methodName) {
@@ -1388,6 +1465,25 @@ public class SourcePostProcessor {
         return buffer.toString();
     }
 
+    private String castOptionalOrElseGetMapSuppliers(String source) {
+        String[] lines = source.split("\\n", -1);
+        String currentMapArgs = null;
+        for (int i = 0; i < lines.length; i++) {
+            Matcher methodMatcher = MAP_METHOD_DECLARATION.matcher(lines[i]);
+            if (methodMatcher.find()) {
+                currentMapArgs = methodMatcher.group(1).trim() + ", " + methodMatcher.group(2).trim();
+            } else if (looksLikeMethodDeclaration(lines[i])) {
+                currentMapArgs = null;
+            }
+            if (currentMapArgs != null && lines[i].contains(".orElseGet(() -> ")
+                    && !lines[i].contains(".orElseGet(() -> (Map<")) {
+                lines[i] = lines[i].replace(".orElseGet(() -> ",
+                        ".orElseGet(() -> (Map<" + currentMapArgs + ">)");
+            }
+        }
+        return String.join("\n", lines);
+    }
+
     private int countChar(String value, char target) {
         int count = 0;
         for (int i = 0; i < value.length(); i++) {
@@ -1417,6 +1513,10 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private String removeMyBatisWrapperCasts(String source) {
+        return source.replaceAll("\\(Wrapper\\)\\s*(new\\s+Lambda(?:Query|Update)Wrapper\\s*<)", "$1");
     }
 
     private String restoreStringListLocalsFromFactoryAssignments(String source) {
