@@ -9,7 +9,7 @@ assert_contains() {
   local needle="$2"
   local label="$3"
   if [[ "${haystack}" != *"${needle}"* ]]; then
-    printf 'FAIL %s: expected help output to contain %s\n' "${label}" "${needle}" >&2
+    printf 'FAIL %s: expected content to contain %s\n' "${label}" "${needle}" >&2
     exit 1
   fi
 }
@@ -20,6 +20,9 @@ if [[ ! -f "${SCRIPT}" ]]; then
 fi
 
 bash -n "${SCRIPT}"
+
+script_source="$(cat "${SCRIPT}")"
+assert_contains "${script_source}" "Missing required LVT names" "summary refined lvt header"
 
 help_output="$(bash "${SCRIPT}" --help)"
 assert_contains "${help_output}" "OTC_ADMIN_JAR" "sample path env"

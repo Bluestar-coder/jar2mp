@@ -660,7 +660,7 @@ write_source_diff_report \
     "${byte_exact_different_nested_libs}" "${byte_exact_archive_entry_order_same}" \
     "${byte_exact_archive_metadata_diff_entries}" "${byte_exact_archive_bytes_same}"
   printf '## Decompile parity risk\n\n'
-  printf '| Mode | Classes | Methods | Parse failures | Missing source methods | Reflection methods | Invokedynamic methods | Missing LVT methods | HIGH | MEDIUM | LOW |\n'
+  printf '| Mode | Classes | Methods | Parse failures | Missing source methods | Reflection methods | Invokedynamic methods | Missing required LVT names | HIGH | MEDIUM | LOW |\n'
   printf '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n'
   printf '| package-record | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
     "${package_record_parity_classes_scanned}" "${package_record_parity_methods_scanned}" \
