@@ -32,7 +32,7 @@ MVN=/path/to/mvn JAVA_TRACE_TIMEOUT=45 ./scripts/regression/run-sample-regressio
 Each sample is marked `PASS` only when:
 
 - jar2mp exits successfully.
-- `restoration-score.md` exists and the overall score meets the sample threshold.
+- `restoration-score.md` exists and the overall source/resource/runtime-observation/build-verification score meets the sample threshold.
 - Source and resource buckets are both `100`.
 - `verification-report.md` reports `BUILD SUCCESS` and `Failure type: NONE`.
 - `decompile-failures.md` reports zero failed decompilations.
@@ -144,4 +144,4 @@ The script runs two independent byte-level gates:
 - `--restore-package-records --verify-build` keeps the ordinary generated Maven project shape, then requires guarded package-record restoration to produce a byte-identical final package.
 - `--byte-exact-package --verify-build` runs the strict package-restoration path and requires the restored final package to be byte-identical to the original sample.
 
-The script exits non-zero unless both modes report `BUILD SUCCESS`, `Failure type: NONE`, `exact_match=true`, and a rebuilt SHA-256 equal to the original JAR SHA-256. The summary also records generated/reference Java file counts, current decompile-fallback counts, and `reference-only` / `generated-only` source file lists. The source diff report marks whether each differing Java source has a corresponding `.class` entry in the original JAR (`root`, `BOOT-INF/classes`, or `WEB-INF/classes`), so reference-project local additions are not mistaken for jar2mp decompilation gaps. These counts are reported as progress evidence rather than byte-exact gates.
+The script exits non-zero unless both modes report `BUILD SUCCESS`, `Failure type: NONE`, `exact_match=true`, and a rebuilt SHA-256 equal to the original JAR SHA-256. The summary also records generated/reference Java file counts, current decompile-fallback counts, and `reference-only` / `generated-only` source file lists. The source diff report marks whether each differing Java source has a corresponding `.class` entry in the original JAR (`root`, `BOOT-INF/classes`, or `WEB-INF/classes`), so reference-project local additions are not mistaken for jar2mp decompilation gaps. These counts are reported as progress evidence rather than byte-exact gates; final package byte equality is proven by the package-record and byte-exact artifact fidelity outputs, not by the runtime-observation portion of `restoration-score.md`.
