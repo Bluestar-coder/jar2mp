@@ -146,7 +146,7 @@ Options:
 
 - `restoration-report.md` - 还原结果总览
 - `resource-inventory.md` - 资源分类与目标路径
-- `decompile-parity-report.md` - 字节码与源码对照，并汇总 HIGH/MEDIUM/LOW 方法级反编译风险
+- `decompile-parity-report.md` - 字节码与源码对照，并汇总 HIGH/MEDIUM/LOW 方法级反编译风险；LocalVariableTable 缺失计数只统计确实有用户参数或本地变量写入、但缺少可恢复变量名的方法
 - `restoration-score.md` - 源码、资源、运行时观测与构建验证的综合评分；最终 package 字节一致性以 artifact fidelity 报告为准
 - `gap-summary.md` - 主要缺口汇总
 - `runtime-trace-report.md` - 运行时追踪报告（启用运行时追踪时生成）
@@ -210,7 +210,7 @@ Options:
 ./scripts/regression/run-otc-admin-regression.sh
 ```
 
-脚本会分别运行 `--restore-package-records --verify-build` 和 `--byte-exact-package --verify-build`，并要求两条链路的 Maven 验证为 `BUILD SUCCESS`、最终 package `exact_match=true`、重建 SHA-256 与原始 JAR 一致，同时要求 `decompile-parity-report.md` 中 class parse failure 和源码缺失方法数均为 `0`。汇总报告写入 `target/otc-admin-sample/report/otc-admin-summary.md` 和 `target/otc-admin-sample/report/otc-admin-summary.csv`，并展开 artifact fidelity 细项，包括内容 entry 是否一致、class byte 差异数、嵌套依赖差异数、entry 顺序、ZIP metadata 差异和整包字节一致性；同时汇总 `decompile-parity-report.md` 的 HIGH/MEDIUM/LOW、源码缺失、反射、invokedynamic 和 LocalVariableTable 缺失方法数。源码清单差异写入 `target/otc-admin-sample/report/otc-admin-source-diff.txt`，用于区分参考项目本地补充文件和 jar2mp 生成文件，并标注差异源码对应的 class 是否存在于原始 JAR。可用 `OTC_ADMIN_JAR`、`OTC_ADMIN_REFERENCE_PROJECT`、`OTC_ADMIN_WORK_DIR`、`JAR2MP_JAR`、`BUILD_JAR2MP`、`MVN`、`JAVA_CMD`、`JAR_CMD` 覆盖默认值。
+脚本会分别运行 `--restore-package-records --verify-build` 和 `--byte-exact-package --verify-build`，并要求两条链路的 Maven 验证为 `BUILD SUCCESS`、最终 package `exact_match=true`、重建 SHA-256 与原始 JAR 一致，同时要求 `decompile-parity-report.md` 中 class parse failure 和源码缺失方法数均为 `0`。汇总报告写入 `target/otc-admin-sample/report/otc-admin-summary.md` 和 `target/otc-admin-sample/report/otc-admin-summary.csv`，并展开 artifact fidelity 细项，包括内容 entry 是否一致、class byte 差异数、嵌套依赖差异数、entry 顺序、ZIP metadata 差异和整包字节一致性；同时汇总 `decompile-parity-report.md` 的 HIGH/MEDIUM/LOW、源码缺失、反射、invokedynamic 和需要变量名但缺少 LocalVariableTable 名称的方法数。源码清单差异写入 `target/otc-admin-sample/report/otc-admin-source-diff.txt`，用于区分参考项目本地补充文件和 jar2mp 生成文件，并标注差异源码对应的 class 是否存在于原始 JAR。可用 `OTC_ADMIN_JAR`、`OTC_ADMIN_REFERENCE_PROJECT`、`OTC_ADMIN_WORK_DIR`、`JAR2MP_JAR`、`BUILD_JAR2MP`、`MVN`、`JAVA_CMD`、`JAR_CMD` 覆盖默认值。
 
 能还原的主要内容：
 
