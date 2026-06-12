@@ -83,6 +83,81 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesRepeatedValidationAnnotationsOnOneParameter() {
+        String processed = new SourcePostProcessor().process(
+                "public Result<UserBankCardDTO> queryById(@PathVariable(value=\"id\") "
+                        + "@Valid @NotNull(message=\"id cannot be empty\") "
+                        + "@Valid @NotNull(message=\"id cannot be empty\") Long id) {\n"
+                        + "    return Result.ok(id);\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("@Valid @NotNull(message=\"id cannot be empty\") Long id"));
+        assertFalse(processed.contains("@Valid @NotNull(message=\"id cannot be empty\") @Valid"));
+    }
+
+    @Test
+    void restoresLambdaQueryWrapperEntityTypeFromMethodReferences() {
+        String processed = new SourcePostProcessor().process(
+                "LambdaQueryWrapper queryWrapper = (LambdaQueryWrapper)((LambdaQueryWrapper)new "
+                        + "LambdaQueryWrapper().eq(User::getUid, uid)).orderByAsc(User::getUid);\n"
+                        + "List list = this.userService.list((Wrapper)queryWrapper);\n"
+                        + "this.userService.clean(list.stream().map(User::getUid).collect(Collectors.toSet()));\n");
+
+        assertTrue(processed.contains("LambdaQueryWrapper<User> queryWrapper"));
+        assertTrue(processed.contains("(LambdaQueryWrapper<User>)new LambdaQueryWrapper<User>()"));
+        assertTrue(processed.contains("List<User> list = this.userService.list((Wrapper)queryWrapper);"));
+    }
+
+    @Test
+    void scopesLambdaQueryWrapperTypesForRepeatedVariableNames() {
+        String processed = new SourcePostProcessor().process(
+                "while (true) {\n"
+                        + "    LambdaQueryWrapper queryWrapper;\n"
+                        + "    List userList;\n"
+                        + "    if (empty((Collection)(userList = this.userService.list((Wrapper)(queryWrapper = "
+                        + "(LambdaQueryWrapper)new LambdaQueryWrapper().gt(User::getUid, startUid))))) break;\n"
+                        + "}\n"
+                        + "while (true) {\n"
+                        + "    LambdaQueryWrapper queryWrapper;\n"
+                        + "    List descriptionList;\n"
+                        + "    if (empty((Collection)(descriptionList = this.userDescriptionService.list((Wrapper)(queryWrapper = "
+                        + "(LambdaQueryWrapper)new LambdaQueryWrapper().gt(UserDescription::getId, startId))))) break;\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("LambdaQueryWrapper<User> queryWrapper;"));
+        assertTrue(processed.contains("List<User> userList;"));
+        assertTrue(processed.contains("LambdaQueryWrapper<UserDescription> queryWrapper;"));
+        assertTrue(processed.contains("List<UserDescription> descriptionList;"));
+        assertFalse(processed.contains("LambdaQueryWrapper<UserDescription> queryWrapper;\n"
+                + "    List<UserDescription> userList;"));
+    }
+
+    @Test
+    void restoresPageInfoElementTypeFromRowListStreamMethodReference() {
+        String processed = new SourcePostProcessor().process(
+                "PageInfo resp;\n"
+                        + "if (!empty((resp = this.api.query(req)).getRowList())) {\n"
+                        + "    List uids = resp.getRowList().stream().map(AdOrderPageResp::getUid).collect(Collectors.toList());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageInfo<AdOrderPageResp> resp;"));
+    }
+
+    @Test
+    void restoresLocalTypeFromGenericMethodReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "public void run(Long id) {\n"
+                        + "    Map userMap = this.getUserMap(null, Collections.singletonList(id));\n"
+                        + "    String account = userMap.getOrDefault(id, \"\");\n"
+                        + "}\n"
+                        + "private Map<Long, String> getUserMap(User user, List<Long> uidList) {\n"
+                        + "    return Maps.newHashMap();\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("Map<Long, String> userMap = this.getUserMap"));
+    }
+
+    @Test
     void addsListElementTypeWhenEnhancedForUsesTypedElement() {
         String processed = new SourcePostProcessor().process(
                 "List findPetTypes = this.types.findPetTypes();\n"

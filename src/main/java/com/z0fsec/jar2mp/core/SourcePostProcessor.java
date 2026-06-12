@@ -1,6 +1,7 @@
 package com.z0fsec.jar2mp.core;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -51,6 +52,18 @@ public class SourcePostProcessor {
             "switch\\s*\\(\\s*1\\.(\\$SwitchMap\\$[A-Za-z0-9_$]+)\\[([\\s\\S]+?)\\.ordinal\\(\\)\\]\\s*\\)");
     private static final Pattern SYNTHETIC_ENUM_SWITCH_CASE = Pattern.compile(
             "(\\bcase\\s+)(\\d+)(\\s*(?::|->))");
+    private static final Pattern METHOD_REFERENCE_TYPE = Pattern.compile(
+            "\\b([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::[A-Za-z_$][\\w$]*");
+    private static final Pattern LAMBDA_QUERY_WRAPPER_DECLARATION = Pattern.compile(
+            "\\bLambdaQueryWrapper\\s+([A-Za-z_$][\\w$]*)\\s*=");
+    private static final Pattern LAMBDA_QUERY_WRAPPER_ASSIGNMENT = Pattern.compile(
+            "\\b([A-Za-z_$][\\w$]*)\\s*=\\s*(?:\\(LambdaQueryWrapper(?:<[^>]+>)?\\)|new\\s+LambdaQueryWrapper(?:<[^>]+>)?\\()");
+    private static final Pattern PAGE_INFO_ROW_LIST_METHOD_REFERENCE = Pattern.compile(
+            "\\b([A-Za-z_$][\\w$]*)\\.getRowList\\(\\)\\.stream\\(\\)\\.map\\(\\s*"
+                    + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::");
+    private static final Pattern GENERIC_METHOD_DECLARATION = Pattern.compile(
+            "(?m)^\\s*(?:(?:public|protected|private|static|final|synchronized)\\s+)*"
+                    + "([A-Za-z_$][\\w$.]*\\s*<[^\\n;{}]+>)\\s+([A-Za-z_$][\\w$]*)\\s*\\(");
 
     public String process(String source) {
         return process(source, null);
@@ -70,10 +83,14 @@ public class SourcePostProcessor {
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
         processed = removeParameterArrayCasts(processed);
+        processed = removeRepeatedValidationAnnotations(processed);
         processed = addListElementTypes(processed);
         processed = addOptionalElementTypes(processed);
         processed = addNumericGenericElementTypes(processed);
         processed = addObjectElementTypesToRawListCasts(processed);
+        processed = restoreLambdaQueryWrapperEntityTypes(processed);
+        processed = restorePageInfoRowListElementTypes(processed);
+        processed = restoreLocalTypesFromGenericMethodReturns(processed);
         processed = widenExecutionExceptionCauseLocals(processed);
         processed = replaceAnsiTextSyntheticOuterReferences(processed);
         processed = hoistForLoopCountersReferencedByLaterLoops(processed);
@@ -113,6 +130,211 @@ public class SourcePostProcessor {
             return source;
         }
         return source.substring(matcher.end());
+    }
+
+    private String removeRepeatedValidationAnnotations(String source) {
+        String processed = source;
+        String previous;
+        do {
+            previous = processed;
+            processed = processed.replaceAll(
+                    "@Valid\\s+(@NotNull(?:\\([^)]*\\))?)\\s+@Valid\\s+\\1",
+                    "@Valid $1");
+            processed = processed.replaceAll("(@[A-Za-z_$][\\w$.]*(?:\\([^)]*\\))?)\\s+\\1", "$1");
+        } while (!processed.equals(previous));
+        return processed;
+    }
+
+    private String restoreLambdaQueryWrapperEntityTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> currentWrapperTypes = new LinkedHashMap<>();
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.contains("LambdaQueryWrapper") && line.contains("::")) {
+                String entityType = firstMethodReferenceType(line);
+                if (entityType != null) {
+                    String typedWrapper = "LambdaQueryWrapper<" + entityType + ">";
+                    Map<String, String> lineWrapperTypes = lambdaQueryWrapperVariables(line, entityType);
+                    line = line.replace("new LambdaQueryWrapper()", "new " + typedWrapper + "()");
+                    line = line.replace("(LambdaQueryWrapper)", "(" + typedWrapper + ")");
+                    line = replaceLambdaQueryWrapperDeclarations(line, typedWrapper);
+                    for (Map.Entry<String, String> entry : lineWrapperTypes.entrySet()) {
+                        currentWrapperTypes.put(entry.getKey(), entry.getValue());
+                        typeNearestPreviousLambdaQueryWrapperDeclaration(lines, i, entry.getKey(), entry.getValue());
+                        typeNearestPreviousListDeclarationFromAssignment(lines, i, line, entry.getKey(), entry.getValue());
+                    }
+                }
+            }
+            line = typeListAssignmentLine(line, currentWrapperTypes);
+            lines[i] = line;
+        }
+
+        return String.join("\n", lines);
+    }
+
+    private String firstMethodReferenceType(String line) {
+        int wrapperStart = line.indexOf("new LambdaQueryWrapper");
+        if (wrapperStart < 0) {
+            wrapperStart = line.indexOf("(LambdaQueryWrapper");
+        }
+        String search = wrapperStart >= 0 ? line.substring(wrapperStart) : line;
+        Matcher matcher = METHOD_REFERENCE_TYPE.matcher(search);
+        if (!matcher.find()) {
+            return null;
+        }
+        return matcher.group(1);
+    }
+
+    private Map<String, String> lambdaQueryWrapperVariables(String line, String entityType) {
+        Map<String, String> wrapperTypes = new LinkedHashMap<>();
+        Matcher declaration = LAMBDA_QUERY_WRAPPER_DECLARATION.matcher(line);
+        while (declaration.find()) {
+            wrapperTypes.put(declaration.group(1), entityType);
+        }
+        Matcher assignment = LAMBDA_QUERY_WRAPPER_ASSIGNMENT.matcher(line);
+        while (assignment.find()) {
+            wrapperTypes.put(assignment.group(1), entityType);
+        }
+        return wrapperTypes;
+    }
+
+    private String replaceLambdaQueryWrapperDeclarations(String line, String typedWrapper) {
+        Matcher matcher = LAMBDA_QUERY_WRAPPER_DECLARATION.matcher(line);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(typedWrapper + " " + matcher.group(1) + " ="));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private void typeNearestPreviousLambdaQueryWrapperDeclaration(String[] lines, int currentIndex,
+                                                                  String wrapperName, String entityType) {
+        Pattern declaration = Pattern.compile(
+                "\\bLambdaQueryWrapper\\s+" + Pattern.quote(wrapperName) + "\\s*([;=])");
+        for (int i = currentIndex - 1; i >= 0; i--) {
+            Matcher matcher = declaration.matcher(lines[i]);
+            if (matcher.find()) {
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "LambdaQueryWrapper<" + entityType + "> " + wrapperName) + "$1");
+                return;
+            }
+            if (lines[i].contains("{") || lines[i].contains("}")) {
+                return;
+            }
+        }
+    }
+
+    private void typeNearestPreviousListDeclarationFromAssignment(String[] lines, int currentIndex, String line,
+                                                                  String wrapperName, String entityType) {
+        Pattern assignment = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\s*=\\s*[^;\\n]*\\blist\\s*"
+                + "\\(\\s*\\(Wrapper\\)\\s*\\(*\\s*"
+                + Pattern.quote(wrapperName)
+                + "\\b");
+        Matcher assignmentMatcher = assignment.matcher(line);
+        while (assignmentMatcher.find()) {
+            String listName = assignmentMatcher.group(1);
+            Pattern declaration = Pattern.compile("\\bList\\s+" + Pattern.quote(listName) + "\\s*;");
+            for (int i = currentIndex - 1; i >= 0; i--) {
+                Matcher declarationMatcher = declaration.matcher(lines[i]);
+                if (declarationMatcher.find()) {
+                    lines[i] = declarationMatcher.replaceFirst(
+                            Matcher.quoteReplacement("List<" + entityType + "> " + listName + ";"));
+                    break;
+                }
+                if (lines[i].contains("{") || lines[i].contains("}")) {
+                    break;
+                }
+            }
+        }
+    }
+
+    private String typeListAssignmentLine(String line, Map<String, String> currentWrapperTypes) {
+        String processed = line;
+        for (Map.Entry<String, String> entry : currentWrapperTypes.entrySet()) {
+            Pattern listAssignment = Pattern.compile("^(\\s*)List\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                    + "([^;\\n]*\\blist\\s*\\(\\s*\\(Wrapper\\)\\s*"
+                    + Pattern.quote(entry.getKey())
+                    + "\\s*\\)[^;\\n]*;)");
+            processed = typeListAssignment(processed, listAssignment, entry.getValue());
+        }
+        Pattern inlineAssignment = Pattern.compile("^(\\s*)List\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "([^;\\n]*new\\s+LambdaQueryWrapper<([A-Za-z_$][\\w$.]*)>\\(\\)[^;\\n]*;)");
+        Matcher matcher = inlineAssignment.matcher(processed);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "List<" + matcher.group(4) + "> " + matcher.group(2) + " = " + matcher.group(3)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String typeListAssignment(String line, Pattern listAssignment, String entityType) {
+        Matcher matcher = listAssignment.matcher(line);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "List<" + entityType + "> " + matcher.group(2) + " = " + matcher.group(3)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String restorePageInfoRowListElementTypes(String source) {
+        Matcher matcher = PAGE_INFO_ROW_LIST_METHOD_REFERENCE.matcher(source);
+        Map<String, String> pageInfoTypes = new LinkedHashMap<>();
+        while (matcher.find()) {
+            pageInfoTypes.putIfAbsent(matcher.group(1), matcher.group(2));
+        }
+        String processed = source;
+        for (Map.Entry<String, String> entry : pageInfoTypes.entrySet()) {
+            Pattern declaration = Pattern.compile(
+                    "\\bPageInfo\\s+" + Pattern.quote(entry.getKey()) + "\\s*([;=])");
+            processed = declaration.matcher(processed)
+                    .replaceAll(Matcher.quoteReplacement("PageInfo<" + entry.getValue() + "> "
+                            + entry.getKey()) + "$1");
+        }
+        return processed;
+    }
+
+    private String restoreLocalTypesFromGenericMethodReturns(String source) {
+        Matcher declarationMatcher = GENERIC_METHOD_DECLARATION.matcher(source);
+        Map<String, String> returnTypes = new LinkedHashMap<>();
+        while (declarationMatcher.find()) {
+            returnTypes.putIfAbsent(declarationMatcher.group(2), normalizeGenericType(declarationMatcher.group(1)));
+        }
+
+        String processed = source;
+        for (Map.Entry<String, String> entry : returnTypes.entrySet()) {
+            String genericType = entry.getValue();
+            String rawSimpleName = rawSimpleTypeName(genericType);
+            Pattern assignment = Pattern.compile("(?m)^(\\s*)"
+                    + Pattern.quote(rawSimpleName)
+                    + "\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*((?:this\\.)?"
+                    + Pattern.quote(entry.getKey())
+                    + "\\s*\\([^;\\n]*;)");
+            Matcher matcher = assignment.matcher(processed);
+            StringBuffer buffer = new StringBuffer();
+            while (matcher.find()) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                        matcher.group(1) + genericType + " " + matcher.group(2) + " = " + matcher.group(3)));
+            }
+            matcher.appendTail(buffer);
+            processed = buffer.toString();
+        }
+        return processed;
+    }
+
+    private String normalizeGenericType(String type) {
+        return type.replaceAll("\\s+", " ").trim();
+    }
+
+    private String rawSimpleTypeName(String genericType) {
+        int genericStart = genericType.indexOf('<');
+        String rawType = genericStart >= 0 ? genericType.substring(0, genericStart).trim() : genericType.trim();
+        int lastDot = rawType.lastIndexOf('.');
+        return lastDot >= 0 ? rawType.substring(lastDot + 1) : rawType;
     }
 
     private String removeRedundantImports(String source, String className) {
