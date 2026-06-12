@@ -109,6 +109,18 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresLambdaQueryWrapperDeclarationFromLaterWrapperMethodReference() {
+        String processed = new SourcePostProcessor().process(
+                "LambdaQueryWrapper wrapper = new LambdaQueryWrapper();\n"
+                        + "((LambdaQueryWrapper<UserVerityAudit>)((LambdaQueryWrapper<UserVerityAudit>)"
+                        + "wrapper.eq(UserVerityAudit::getUid, uid)).eq(UserVerityAudit::getStatus, 0))"
+                        + ".last(\"limit 1\");\n");
+
+        assertTrue(processed.contains("LambdaQueryWrapper<UserVerityAudit> wrapper = "
+                + "new LambdaQueryWrapper<UserVerityAudit>();"));
+    }
+
+    @Test
     void restoresLambdaUpdateWrapperEntityTypeFromMethodReferences() {
         String processed = new SourcePostProcessor().process(
                 "this.sysUserMapper.update(null, (Wrapper)((LambdaUpdateWrapper)new LambdaUpdateWrapper()"
@@ -454,6 +466,57 @@ class SourcePostProcessorTest {
                         + ".collect(Collectors.toMap(User::getUid, User::getLastChannel));\n");
 
         assertTrue(processed.contains("List<User> userList = this.userService.listByIds(uidList);"));
+    }
+
+    @Test
+    void restoresRawMapTypeFromCollectorsToMapIdentity() {
+        String processed = new SourcePostProcessor().process(
+                "Map configMap = this.coinConfigService.listByCoinNames(null).stream()"
+                        + ".collect(Collectors.toMap(CoinConfig::getCoinName, Function.identity()));\n"
+                        + "configMap.forEach((name, config) -> resp.setCoinName(name));\n");
+
+        assertTrue(processed.contains("Map<String, CoinConfig> configMap = this.coinConfigService"));
+    }
+
+    @Test
+    void restoresRawMapTypeFromCollectorsToMapValueMethodReference() {
+        String processed = new SourcePostProcessor().process(
+                "Map booleanMap = list.stream().collect(Collectors.toMap(CheckBalanceDTO::getUid, "
+                        + "CheckBalanceDTO::getCheckRes));\n");
+
+        assertTrue(processed.contains("Map<Long, Boolean> booleanMap = list.stream()"));
+    }
+
+    @Test
+    void restoresRawListTypeFromLaterElementCast() {
+        String processed = new SourcePostProcessor().process(
+                "List userList;\n"
+                        + "startUid = ((User)userList.get(userList.size() - 1)).getUid();\n");
+
+        assertTrue(processed.contains("List<User> userList;"));
+    }
+
+    @Test
+    void restoresRawListTypeFromLaterStreamMethodReference() {
+        String processed = new SourcePostProcessor().process(
+                "List list;\n"
+                        + "List uidList = list.stream().map(PointsConsumptionUserDailyStatsSummaryDto::getUid)"
+                        + ".collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("List<PointsConsumptionUserDailyStatsSummaryDto> list;"));
+    }
+
+    @Test
+    void restoresStringObjectMapListTypesFromStringKeyUsage() {
+        String processed = new SourcePostProcessor().process(
+                "List<Map> list = this.accountService.listDuplicateReg();\n"
+                        + "for (Map accountMap : list) {\n"
+                        + "    accountMap.get(\"account\");\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<Map<String, Object>> list = "
+                + "this.accountService.listDuplicateReg();"));
+        assertTrue(processed.contains("for (Map<String, Object> accountMap : list)"));
     }
 
     @Test

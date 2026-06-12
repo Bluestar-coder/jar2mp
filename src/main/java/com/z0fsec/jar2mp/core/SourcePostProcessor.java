@@ -124,9 +124,12 @@ public class SourcePostProcessor {
         processed = restoreLocalTypesFromGenericMethodReturns(processed);
         processed = restorePageInfoLocalsFromPageDataReturnTypes(processed);
         processed = restoreListLocalsFromListReturnTypes(processed);
+        processed = restoreRawListTypesFromElementUsage(processed);
+        processed = restoreStringObjectMapListTypes(processed);
         processed = restoreNestedListPartitionTypes(processed);
         processed = restoreRawListTypesFromEnhancedForUsage(processed);
         processed = restoreIdentifyMapTypes(processed);
+        processed = restoreRawMapTypesFromCollectorsToMap(processed);
         processed = restoreMapValueTypesFromInitializers(processed);
         processed = restoreMapEntryEnhancedForTypes(processed);
         processed = widenShiroFilterMapTypes(processed);
@@ -270,6 +273,12 @@ public class SourcePostProcessor {
         while (assignment.find()) {
             wrapperTypes.put(assignment.group(1), entityType);
         }
+        Pattern receiverCall = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\s*\\.\\s*"
+                + "[A-Za-z_$][\\w$]*\\s*\\(\\s*" + Pattern.quote(entityType) + "::");
+        Matcher receiver = receiverCall.matcher(line);
+        while (receiver.find()) {
+            wrapperTypes.put(receiver.group(1), entityType);
+        }
         return wrapperTypes;
     }
 
@@ -290,8 +299,13 @@ public class SourcePostProcessor {
         for (int i = currentIndex - 1; i >= 0; i--) {
             Matcher matcher = declaration.matcher(lines[i]);
             if (matcher.find()) {
-                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
-                        "LambdaQueryWrapper<" + entityType + "> " + wrapperName) + "$1");
+                String typedWrapper = "LambdaQueryWrapper<" + entityType + ">";
+                String suffix = matcher.group(1).equals(";") ? ";" : " =";
+                String typedLine = matcher.replaceFirst(Matcher.quoteReplacement(
+                        typedWrapper + " " + wrapperName + suffix));
+                lines[i] = typedLine.replaceFirst(
+                        "\\bnew\\s+LambdaQueryWrapper\\s*\\(\\s*\\)",
+                        Matcher.quoteReplacement("new " + typedWrapper + "()"));
                 return;
             }
             if (lines[i].contains("{") || lines[i].contains("}")) {
@@ -696,6 +710,25 @@ public class SourcePostProcessor {
         return String.join("\n", lines);
     }
 
+    private String restoreRawListTypesFromElementUsage(String source) {
+        String[] lines = source.split("\\n", -1);
+        Pattern castGet = Pattern.compile("\\(\\s*([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)\\s*\\)\\s*"
+                + "([A-Za-z_$][\\w$]*)\\.get(?:First|Last)?\\s*\\(");
+        Pattern streamMap = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\.stream\\(\\)\\.map\\(\\s*"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher castMatcher = castGet.matcher(lines[i]);
+            while (castMatcher.find()) {
+                typePreviousRawListDeclaration(lines, i, castMatcher.group(2), castMatcher.group(1));
+            }
+            Matcher streamMatcher = streamMap.matcher(lines[i]);
+            while (streamMatcher.find()) {
+                typePreviousRawListDeclaration(lines, i, streamMatcher.group(1), streamMatcher.group(2));
+            }
+        }
+        return String.join("\n", lines);
+    }
+
     private void typePreviousRawListDeclaration(String[] lines, int currentIndex, String listName, String elementType) {
         Pattern declaration = Pattern.compile("\\bList\\s+" + Pattern.quote(listName) + "\\s*([;=])");
         for (int i = currentIndex; i >= 0; i--) {
@@ -712,6 +745,83 @@ public class SourcePostProcessor {
         }
     }
 
+    private String restoreStringObjectMapListTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Pattern rawMapList = Pattern.compile("\\bList\\s*<\\s*Map\\s*>\\s+([A-Za-z_$][\\w$]*)\\s*([;=])");
+        Pattern rawMapFor = Pattern.compile("\\bfor\\s*\\(\\s*Map\\s+([A-Za-z_$][\\w$]*)\\s*:\\s*"
+                + "([A-Za-z_$][\\w$]*)\\s*\\)");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher listMatcher = rawMapList.matcher(lines[i]);
+            while (listMatcher.find()) {
+                String listName = listMatcher.group(1);
+                if (!isStringKeyMapElementUsed(lines, i + 1, listName)) {
+                    continue;
+                }
+                String suffix = listMatcher.group(2).equals(";") ? ";" : " =";
+                lines[i] = listMatcher.replaceFirst(Matcher.quoteReplacement(
+                        "List<Map<String, Object>> " + listName + suffix));
+            }
+        }
+        for (int i = 0; i < lines.length; i++) {
+            Matcher forMatcher = rawMapFor.matcher(lines[i]);
+            while (forMatcher.find()) {
+                String mapName = forMatcher.group(1);
+                String listName = forMatcher.group(2);
+                if (isTypedStringObjectMapList(lines, i, listName)
+                        || isStringKeyMapLocalUsed(lines, i + 1, mapName)) {
+                    lines[i] = forMatcher.replaceFirst(Matcher.quoteReplacement(
+                            "for (Map<String, Object> " + mapName + " : " + listName + ")"));
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private boolean isStringKeyMapElementUsed(String[] lines, int start, String listName) {
+        Pattern rawMapFor = Pattern.compile("\\bfor\\s*\\(\\s*Map(?:\\s*<\\s*String\\s*,\\s*Object\\s*>)?\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*:\\s*" + Pattern.quote(listName) + "\\s*\\)");
+        for (int i = start; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                return false;
+            }
+            Matcher matcher = rawMapFor.matcher(lines[i]);
+            if (matcher.find() && isStringKeyMapLocalUsed(lines, i + 1, matcher.group(1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isStringKeyMapLocalUsed(String[] lines, int start, String mapName) {
+        Pattern stringKeyGet = Pattern.compile("\\b" + Pattern.quote(mapName) + "\\.get\\s*\\(\\s*\"");
+        for (int i = start; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                return false;
+            }
+            if (stringKeyGet.matcher(lines[i]).find()) {
+                return true;
+            }
+            if (lines[i].matches("\\s*}\\s*")) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private boolean isTypedStringObjectMapList(String[] lines, int currentIndex, String listName) {
+        Pattern typedList = Pattern.compile("\\bList\\s*<\\s*Map\\s*<\\s*String\\s*,\\s*Object\\s*>\\s*>\\s+"
+                + Pattern.quote(listName) + "\\s*([;=])");
+        for (int i = currentIndex; i >= 0; i--) {
+            if (i != currentIndex && looksLikeMethodDeclaration(lines[i])) {
+                return false;
+            }
+            if (typedList.matcher(lines[i]).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private String typeNestedListEnhancedFor(String line, String partitionName, String elementType) {
         Pattern enhancedFor = Pattern.compile("\\bfor\\s*\\(\\s*List\\s+([A-Za-z_$][\\w$]*)\\s*:\\s*"
                 + Pattern.quote(partitionName) + "\\s*\\)");
@@ -723,6 +833,59 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private String restoreRawMapTypesFromCollectorsToMap(String source) {
+        Matcher matcher = Pattern.compile("(?m)^(\\s*)Map\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "([^;\\n]*Collectors\\.toMap\\(\\s*"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::([A-Za-z_$][\\w$]*)\\s*,\\s*"
+                + "(?:Function\\.identity\\(\\)|"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::([A-Za-z_$][\\w$]*))"
+                + "[^;\\n]*;)").matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String ownerType = matcher.group(4);
+            String keyType = inferGetterReturnType(matcher.group(5));
+            String valueType = matcher.group(7) == null ? ownerType : inferGetterReturnType(matcher.group(7));
+            if (keyType == null || valueType == null) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group()));
+                continue;
+            }
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "Map<" + keyType + ", " + valueType + "> "
+                            + matcher.group(2) + " = " + matcher.group(3)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String inferGetterReturnType(String methodName) {
+        if (methodName.startsWith("is") || methodName.equals("getCheckRes")
+                || methodName.startsWith("getIs")) {
+            return "Boolean";
+        }
+        if (!methodName.startsWith("get") || methodName.length() <= 3) {
+            return null;
+        }
+        String property = methodName.substring(3);
+        if (property.equals("Uid") || property.endsWith("Uid")
+                || property.equals("Id") || property.endsWith("Id")) {
+            return "Long";
+        }
+        if (property.equals("Identify") || property.endsWith("Name") || property.endsWith("Account")
+                || property.endsWith("Title") || property.endsWith("Content") || property.endsWith("Addr")
+                || property.endsWith("Code")) {
+            return "String";
+        }
+        if (property.endsWith("Status") || property.endsWith("Type") || property.endsWith("Count")
+                || property.endsWith("Num") || property.endsWith("Size") || property.endsWith("Level")
+                || property.endsWith("Channel")) {
+            return "Integer";
+        }
+        if (property.endsWith("Amount") || property.endsWith("Balance")) {
+            return "BigDecimal";
+        }
+        return null;
     }
 
     private String restoreIdentifyMapTypes(String source) {
