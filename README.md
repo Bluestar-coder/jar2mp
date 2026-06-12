@@ -210,7 +210,7 @@ Options:
 ./scripts/regression/run-otc-admin-regression.sh
 ```
 
-脚本会分别运行 `--restore-package-records --verify-build` 和 `--byte-exact-package --verify-build`，并要求两条链路的 Maven 验证为 `BUILD SUCCESS`、最终 package `exact_match=true`、重建 SHA-256 与原始 JAR 一致。汇总报告写入 `target/otc-admin-sample/report/otc-admin-summary.md` 和 `target/otc-admin-sample/report/otc-admin-summary.csv`，并展开 artifact fidelity 细项，包括内容 entry 是否一致、class byte 差异数、嵌套依赖差异数、entry 顺序、ZIP metadata 差异和整包字节一致性。源码清单差异写入 `target/otc-admin-sample/report/otc-admin-source-diff.txt`，用于区分参考项目本地补充文件和 jar2mp 生成文件，并标注差异源码对应的 class 是否存在于原始 JAR。可用 `OTC_ADMIN_JAR`、`OTC_ADMIN_REFERENCE_PROJECT`、`OTC_ADMIN_WORK_DIR`、`JAR2MP_JAR`、`BUILD_JAR2MP`、`MVN`、`JAVA_CMD`、`JAR_CMD` 覆盖默认值。
+脚本会分别运行 `--restore-package-records --verify-build` 和 `--byte-exact-package --verify-build`，并要求两条链路的 Maven 验证为 `BUILD SUCCESS`、最终 package `exact_match=true`、重建 SHA-256 与原始 JAR 一致。汇总报告写入 `target/otc-admin-sample/report/otc-admin-summary.md` 和 `target/otc-admin-sample/report/otc-admin-summary.csv`，并展开 artifact fidelity 细项，包括内容 entry 是否一致、class byte 差异数、嵌套依赖差异数、entry 顺序、ZIP metadata 差异和整包字节一致性；同时汇总 `decompile-parity-report.md` 的 HIGH/MEDIUM/LOW、源码缺失、反射、invokedynamic 和 LocalVariableTable 缺失方法数。源码清单差异写入 `target/otc-admin-sample/report/otc-admin-source-diff.txt`，用于区分参考项目本地补充文件和 jar2mp 生成文件，并标注差异源码对应的 class 是否存在于原始 JAR。可用 `OTC_ADMIN_JAR`、`OTC_ADMIN_REFERENCE_PROJECT`、`OTC_ADMIN_WORK_DIR`、`JAR2MP_JAR`、`BUILD_JAR2MP`、`MVN`、`JAVA_CMD`、`JAR_CMD` 覆盖默认值。
 
 能还原的主要内容：
 

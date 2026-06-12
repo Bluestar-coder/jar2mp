@@ -33,3 +33,4 @@ assert_contains "${help_output}" "otc-admin-source-diff.txt" "source diff report
 assert_contains "${help_output}" "reference-only Java files" "source diff purpose"
 assert_contains "${help_output}" "original JAR class presence" "source diff class presence"
 assert_contains "${help_output}" "class bytecode and ZIP metadata fidelity details" "artifact fidelity detail purpose"
+assert_contains "${help_output}" "decompile parity risk summary" "parity risk detail purpose"
