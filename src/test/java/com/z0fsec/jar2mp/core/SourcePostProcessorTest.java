@@ -159,6 +159,21 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesSyntheticOuterConstructorArgumentWhenNoArgConstructorExists() {
+        String processed = new SourcePostProcessor().process(
+                "public class RestTemplateConfig {\n"
+                        + "    void run() { call(new RestTemplateConfig.HeadParamInterceptor(this)); }\n"
+                        + "    private class HeadParamInterceptor {\n"
+                        + "        private HeadParamInterceptor() {\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("new HeadParamInterceptor()"));
+        assertFalse(processed.contains("new HeadParamInterceptor(this)"));
+    }
+
+    @Test
     void scopesLambdaQueryWrapperTypesForRepeatedVariableNames() {
         String processed = new SourcePostProcessor().process(
                 "while (true) {\n"

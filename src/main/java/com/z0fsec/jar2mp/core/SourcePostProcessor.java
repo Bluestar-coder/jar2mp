@@ -87,6 +87,8 @@ public class SourcePostProcessor {
             "(?m)^(\\s*)CharSequence\\[\\]\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*\\.split\\([^;\\n]*\\);)");
     private static final Pattern RAW_ARRAY_LIST_DECLARATION = Pattern.compile(
             "(?m)^(\\s*)ArrayList\\s+([A-Za-z_$][\\w$]*)\\s*;");
+    private static final Pattern NO_ARG_CONSTRUCTOR_DECLARATION = Pattern.compile(
+            "(?m)^\\s*(?:public|protected|private)?\\s+([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\)\\s*\\{");
 
     public static Map<String, Map<String, String>> indexMapstructInputTypes(Map<String, String> sources) {
         if (sources == null || sources.isEmpty()) {
@@ -233,6 +235,7 @@ public class SourcePostProcessor {
         processed = replaceUnavailableAnonymousInnerClasses(processed);
         processed = replaceNumericAnonymousClassFragments(processed);
         processed = shortenQualifiedInnerInstanceCreations(processed);
+        processed = removeSyntheticOuterConstructorArguments(processed);
         processed = replaceCfrVoidTemporaryLocals(processed);
         processed = balanceNullArgumentStatements(processed);
         processed = castDoPrivilegedMethodReferences(processed);
@@ -247,6 +250,24 @@ public class SourcePostProcessor {
         processed = restoreRoleMenuListTypes(processed);
         processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
         processed = restoreCheckedExceptionHandlers(processed);
+        return processed;
+    }
+
+    private String removeSyntheticOuterConstructorArguments(String source) {
+        Set<String> noArgConstructors = new LinkedHashSet<>();
+        Matcher matcher = NO_ARG_CONSTRUCTOR_DECLARATION.matcher(source);
+        while (matcher.find()) {
+            noArgConstructors.add(matcher.group(1));
+        }
+        String processed = source;
+        for (String constructorName : noArgConstructors) {
+            Pattern syntheticInvocation = Pattern.compile("\\bnew\\s+"
+                    + "(?:[A-Za-z_$][\\w$]*\\.)*"
+                    + Pattern.quote(constructorName)
+                    + "\\s*\\(\\s*this\\s*\\)");
+            processed = syntheticInvocation.matcher(processed)
+                    .replaceAll(Matcher.quoteReplacement("new " + constructorName + "()"));
+        }
         return processed;
     }
 
