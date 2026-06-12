@@ -2,7 +2,9 @@ package com.z0fsec.jar2mp.core;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -86,6 +88,60 @@ public class SourcePostProcessor {
     private static final Pattern RAW_ARRAY_LIST_DECLARATION = Pattern.compile(
             "(?m)^(\\s*)ArrayList\\s+([A-Za-z_$][\\w$]*)\\s*;");
 
+    public static Map<String, Map<String, String>> indexMapstructInputTypes(Map<String, String> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, Map<String, String>> index = new LinkedHashMap<>();
+        for (String source : sources.values()) {
+            if (source == null || !source.contains("Mapstruct")) {
+                continue;
+            }
+            Matcher interfaceMatcher = Pattern.compile("\\binterface\\s+([A-Za-z_$][\\w$]*Mapstruct)\\b")
+                    .matcher(source);
+            if (!interfaceMatcher.find()) {
+                continue;
+            }
+            String mapperName = interfaceMatcher.group(1);
+            Map<String, String> imports = simpleImports(source);
+            Matcher methodMatcher = Pattern.compile("(?m)^\\s*(?:public\\s+)?"
+                    + "[A-Za-z_$][\\w$.]*(?:\\s*<[^;()]+>)?\\s+([A-Za-z_$][\\w$]*)\\s*\\(\\s*"
+                    + "(?:List\\s*<\\s*)?([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)?)"
+                    + "(?:\\s*>\\s*)?\\s+[A-Za-z_$][\\w$]*\\s*\\)\\s*;")
+                    .matcher(source);
+            Map<String, String> methods = index.computeIfAbsent(mapperName, ignored -> new LinkedHashMap<>());
+            while (methodMatcher.find()) {
+                String methodName = methodMatcher.group(1);
+                String inputType = resolveImportedType(methodMatcher.group(2), imports);
+                methods.put(methodName, inputType);
+            }
+            if (methods.isEmpty()) {
+                index.remove(mapperName);
+            }
+        }
+        return index.isEmpty() ? Collections.emptyMap() : index;
+    }
+
+    private static Map<String, String> simpleImports(String source) {
+        Map<String, String> imports = new LinkedHashMap<>();
+        Matcher matcher = IMPORT_DECLARATION.matcher(source);
+        while (matcher.find()) {
+            String imported = matcher.group(1);
+            int lastDot = imported.lastIndexOf('.');
+            if (lastDot >= 0) {
+                imports.put(imported.substring(lastDot + 1), imported);
+            }
+        }
+        return imports;
+    }
+
+    private static String resolveImportedType(String typeName, Map<String, String> imports) {
+        if (typeName.contains(".")) {
+            return typeName;
+        }
+        return imports.getOrDefault(typeName, typeName);
+    }
+
     public String process(String source) {
         return process(source, null);
     }
@@ -95,6 +151,11 @@ public class SourcePostProcessor {
     }
 
     public String process(String source, String className, Map<String, Map<Integer, String>> switchCaseMaps) {
+        return process(source, className, switchCaseMaps, Collections.emptyMap());
+    }
+
+    public String process(String source, String className, Map<String, Map<Integer, String>> switchCaseMaps,
+                          Map<String, Map<String, String>> mapstructInputTypes) {
         if (source == null || source.isEmpty()) {
             return source;
         }
@@ -111,6 +172,10 @@ public class SourcePostProcessor {
         processed = removeGuavaPartitionListCasts(processed);
         processed = unwrapSFunctionArraySelects(processed);
         processed = removeMyBatisWrapperCasts(processed);
+        processed = restoreKnownRawGenericUtilityTypes(processed);
+        processed = restoreRawListLongValueOfStreams(processed);
+        processed = restoreMenuFormatterGenerics(processed);
+        processed = castGenericReflectionFieldAccess(processed);
         processed = restoreStringListLocalsFromFactoryAssignments(processed);
         processed = addImmutableMapBuilderTypeArguments(processed);
         processed = castOptionalOrElseGetMapSuppliers(processed);
@@ -126,6 +191,8 @@ public class SourcePostProcessor {
         processed = removeMyBatisWrapperCasts(processed);
         processed = restoreLambdaQueryChainListElementTypes(processed);
         processed = restorePageInfoRowListElementTypes(processed);
+        processed = restorePageInfoTypesFromMapstructRows(processed, mapstructInputTypes);
+        processed = restorePageInfoTypesFromLocalMapperMethods(processed);
         processed = restoreLocalTypesFromGenericMethodReturns(processed);
         processed = restorePageInfoLocalsFromPageDataReturnTypes(processed);
         processed = restoreListLocalsFromListReturnTypes(processed);
@@ -170,6 +237,16 @@ public class SourcePostProcessor {
         processed = balanceNullArgumentStatements(processed);
         processed = castDoPrivilegedMethodReferences(processed);
         processed = removeUnreachableBreakAfterInfiniteLoop(processed);
+        processed = restoreKnownRawGenericUtilityTypes(processed);
+        processed = restoreRawListLongValueOfStreams(processed);
+        processed = restoreMenuFormatterGenerics(processed);
+        processed = restoreMenuIdMappedListTypes(processed);
+        processed = restoreNoticeContentListFormatterTypes(processed, className);
+        processed = restoreBooleanHandleResultTernaries(processed);
+        processed = restorePageDataGetListLocalTypes(processed);
+        processed = restoreRoleMenuListTypes(processed);
+        processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
+        processed = restoreCheckedExceptionHandlers(processed);
         return processed;
     }
 
@@ -403,6 +480,154 @@ public class SourcePostProcessor {
         return String.join("\n", lines);
     }
 
+    private String restorePageInfoTypesFromMapstructRows(String source,
+                                                         Map<String, Map<String, String>> mapstructInputTypes) {
+        if (mapstructInputTypes == null || mapstructInputTypes.isEmpty()) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> lambdaPageInfoNames = new LinkedHashMap<>();
+        Set<String> requiredImports = new LinkedHashSet<>();
+        Pattern rowListLambda = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\.getRowList\\(\\)\\.stream\\(\\)"
+                + "\\.map\\(\\s*([A-Za-z_$][\\w$]*)\\s*->");
+        for (int i = 0; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                lambdaPageInfoNames.clear();
+            }
+            Matcher rowMatcher = rowListLambda.matcher(lines[i]);
+            while (rowMatcher.find()) {
+                lambdaPageInfoNames.put(rowMatcher.group(2), rowMatcher.group(1));
+            }
+            for (Map.Entry<String, String> entry : lambdaPageInfoNames.entrySet()) {
+                String elementType = mapstructInputTypeForLambda(lines[i], entry.getKey(), mapstructInputTypes);
+                if (elementType != null) {
+                    typeNearestPageInfoDeclaration(lines, i, entry.getValue(), simpleTypeName(elementType));
+                    if (elementType.contains(".")) {
+                        requiredImports.add(elementType);
+                    }
+                }
+            }
+            if (lines[i].contains("}).collect")) {
+                lambdaPageInfoNames.clear();
+            }
+        }
+        String processed = String.join("\n", lines);
+        for (String requiredImport : requiredImports) {
+            processed = ensureImport(processed, requiredImport);
+        }
+        return processed;
+    }
+
+    private String mapstructInputTypeForLambda(String line, String lambdaName,
+                                               Map<String, Map<String, String>> mapstructInputTypes) {
+        Pattern mapperCall = Pattern.compile("(?:\\(\\s*([A-Za-z_$][\\w$]*Mapstruct)\\s*\\)\\s*)?"
+                + "([A-Za-z_$][\\w$]*Mapstruct)\\.INSTANCE\\)*\\.([A-Za-z_$][\\w$]*)\\s*\\(\\s*"
+                + Pattern.quote(lambdaName) + "\\b");
+        Matcher matcher = mapperCall.matcher(line);
+        while (matcher.find()) {
+            Map<String, String> methodTypes = mapstructInputTypes.get(matcher.group(2));
+            if (methodTypes == null) {
+                continue;
+            }
+            String inputType = methodTypes.get(matcher.group(3));
+            if (inputType != null) {
+                return inputType;
+            }
+        }
+        return null;
+    }
+
+    private String restorePageInfoTypesFromLocalMapperMethods(String source) {
+        Map<String, String> methodParameterTypes = localSingleArgumentMethodTypes(source);
+        if (methodParameterTypes.isEmpty()) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        Pattern rowListLambda = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\.getRowList\\(\\)\\.stream\\(\\)"
+                + "\\.map\\(\\s*([A-Za-z_$][\\w$]*)\\s*->\\s*this\\.([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\2\\s*\\)");
+        Pattern rowListMethodReference = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\.getRowList\\(\\)\\.stream\\(\\)"
+                + "\\.map\\(\\s*this::([A-Za-z_$][\\w$]*)\\s*\\)");
+        Set<String> requiredImports = new LinkedHashSet<>();
+        for (int i = 0; i < lines.length; i++) {
+            Matcher lambdaMatcher = rowListLambda.matcher(lines[i]);
+            while (lambdaMatcher.find()) {
+                String elementType = methodParameterTypes.get(lambdaMatcher.group(3));
+                if (elementType != null) {
+                    typeNearestPageInfoDeclaration(lines, i, lambdaMatcher.group(1), simpleTypeName(elementType));
+                    if (elementType.contains(".")) {
+                        requiredImports.add(elementType);
+                    }
+                }
+            }
+            Matcher referenceMatcher = rowListMethodReference.matcher(lines[i]);
+            while (referenceMatcher.find()) {
+                String elementType = methodParameterTypes.get(referenceMatcher.group(2));
+                if (elementType != null) {
+                    typeNearestPageInfoDeclaration(lines, i, referenceMatcher.group(1), simpleTypeName(elementType));
+                    if (elementType.contains(".")) {
+                        requiredImports.add(elementType);
+                    }
+                }
+            }
+        }
+        String processed = String.join("\n", lines);
+        for (String requiredImport : requiredImports) {
+            processed = ensureImport(processed, requiredImport);
+        }
+        return processed;
+    }
+
+    private Map<String, String> localSingleArgumentMethodTypes(String source) {
+        Map<String, String> imports = simpleImports(source);
+        Map<String, String> methodTypes = new LinkedHashMap<>();
+        Matcher matcher = Pattern.compile("(?m)^\\s*(?:public|protected|private)\\s+"
+                + "[A-Za-z_$][\\w$.]*(?:\\s*<[^;()]+>)?\\s+([A-Za-z_$][\\w$]*)\\s*\\(\\s*"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)?)\\s+[A-Za-z_$][\\w$]*\\s*\\)")
+                .matcher(source);
+        while (matcher.find()) {
+            methodTypes.put(matcher.group(1), resolveImportedType(matcher.group(2), imports));
+        }
+        return methodTypes;
+    }
+
+    private String simpleTypeName(String typeName) {
+        int lastDot = typeName.lastIndexOf('.');
+        return lastDot >= 0 ? typeName.substring(lastDot + 1) : typeName;
+    }
+
+    private String ensureImport(String source, String fullyQualifiedClassName) {
+        if (fullyQualifiedClassName == null || !fullyQualifiedClassName.contains(".")) {
+            return source;
+        }
+        if (fullyQualifiedClassName.startsWith("java.lang.")
+                && fullyQualifiedClassName.indexOf('.', "java.lang.".length()) < 0) {
+            return source;
+        }
+        Matcher packageMatcher = PACKAGE_DECLARATION.matcher(source);
+        String packageName = packageMatcher.find() ? packageMatcher.group(1) : "";
+        int lastDot = fullyQualifiedClassName.lastIndexOf('.');
+        if (!packageName.isEmpty() && fullyQualifiedClassName.substring(0, lastDot).equals(packageName)) {
+            return source;
+        }
+        String importLine = "import " + fullyQualifiedClassName + ";\n";
+        if (source.contains(importLine) || source.contains("import " + fullyQualifiedClassName + ";\r\n")) {
+            return source;
+        }
+        Matcher importMatcher = IMPORT_DECLARATION.matcher(source);
+        int insertAt = -1;
+        while (importMatcher.find()) {
+            insertAt = importMatcher.end();
+        }
+        if (insertAt >= 0) {
+            return source.substring(0, insertAt) + importLine + source.substring(insertAt);
+        }
+        if (packageMatcher.reset().find()) {
+            insertAt = packageMatcher.end();
+            return source.substring(0, insertAt) + "\n\n" + importLine + source.substring(insertAt);
+        }
+        return importLine + source;
+    }
+
     private boolean isBroadCollectionCastType(String typeName) {
         return typeName.equals("Collection") || typeName.equals("java.util.Collection")
                 || typeName.equals("List") || typeName.equals("java.util.List")
@@ -485,6 +710,323 @@ public class SourcePostProcessor {
             return null;
         }
         return matcher.group(1);
+    }
+
+    private String restoreKnownRawGenericUtilityTypes(String source) {
+        String processed = source;
+        processed = processed.replaceAll("\\bList\\s*<\\s*FieldData\\s*>\\s+"
+                        + "([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*\\.scanList\\([^;\\n]*;)",
+                "List<FieldData<Object>> $1 = $2");
+        processed = processed.replaceAll("\\bList\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                        + "([A-Za-z_$][\\w$]*)\\.stream\\(\\)\\.map\\(FieldData::getField\\)"
+                        + "\\.collect\\(Collectors\\.toList\\(\\)\\);",
+                "List<Field> $1 = $2.stream().map(FieldData::getField).collect(Collectors.toList());");
+        processed = processed.replaceAll("\\bArrayList\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                        + "Lists\\.newArrayList\\(\\s*new\\s+Class\\[\\]\\s*\\{\\s*([^}]*)\\s*}\\s*\\);",
+                "ArrayList<Class<? extends Annotation>> $1 = Lists.newArrayList($2);");
+        processed = restoreTimeSplitterPairTypes(processed);
+        if (processed.contains("List<Field> ")) {
+            processed = ensureImport(processed, "java.lang.reflect.Field");
+        }
+        if (processed.contains("Class<? extends Annotation>")) {
+            processed = ensureImport(processed, "java.lang.annotation.Annotation");
+        }
+        return processed;
+    }
+
+    private String restoreTimeSplitterPairTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Set<String> pairListNames = new LinkedHashSet<>();
+        Pattern assignment = Pattern.compile("\\bList\\s*<\\s*Pair\\s*>\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "([^;\\n]*TimeSplitter\\.splitTimeRange\\([^;\\n]*;)");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = assignment.matcher(lines[i]);
+            StringBuffer buffer = new StringBuffer();
+            while (matcher.find()) {
+                pairListNames.add(matcher.group(1));
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                        "List<Pair<LocalDateTime, LocalDateTime>> " + matcher.group(1) + " = " + matcher.group(2)));
+            }
+            matcher.appendTail(buffer);
+            lines[i] = buffer.toString();
+            for (String pairListName : pairListNames) {
+                lines[i] = lines[i].replaceAll("\\bfor\\s*\\(\\s*Pair\\s+([A-Za-z_$][\\w$]*)\\s*:\\s*"
+                                + Pattern.quote(pairListName) + "\\s*\\)",
+                        "for (Pair<LocalDateTime, LocalDateTime> $1 : " + pairListName + ")");
+            }
+            if (looksLikeMethodDeclaration(lines[i])) {
+                pairListNames.clear();
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String restoreRawListLongValueOfStreams(String source) {
+        return source.replaceAll("\\(\\(List\\)([^)]+)\\)\\.stream\\(\\)\\.map\\(Long::valueOf\\)",
+                "((List<?>)$1).stream().map(String::valueOf).map(Long::valueOf)");
+    }
+
+    private String restoreMenuFormatterGenerics(String source) {
+        if (!source.contains("import com.otc.admin.domain.entity.Menu;")) {
+            return source;
+        }
+        String processed = source;
+        processed = processed.replaceAll("\\bList\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*\\(List\\)"
+                        + "(metaData\\.getObject\\([^;\\n]*\\);)",
+                "List<Menu> $1 = (List<Menu>)$2");
+        processed = processed.replaceAll("\\bList\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*\\(List\\)"
+                        + "(metaData\\.getData\\(\\)\\.get\\([^;\\n]*\\);)",
+                "List<Menu> $1 = (List<Menu>)$2");
+        processed = processed.replaceAll("\\bList\\s*<\\s*Long\\s*>\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                        + "Optional\\.ofNullable\\(([^;\\n]*\\.listMenu\\([^;\\n]*\\))\\)\\.orElseGet\\(ArrayList::new\\);",
+                "List<Menu> $1 = Optional.ofNullable($2).orElseGet(ArrayList::new);");
+        processed = processed.replaceAll("\\bMap\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*"
+                        + "Collectors\\.groupingBy\\(Menu::getParentId,\\s*Collectors\\.toList\\(\\)\\)[^;\\n]*;)",
+                "Map<Long, List<Menu>> $1 = $2");
+        processed = processed.replaceAll("\\bSet\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                        + "Stream\\.of\\(([^;\\n]*\\.keySet\\(\\)[^;\\n]*)\\)\\.flatMap\\(Collection::stream\\)"
+                        + "\\.collect\\(Collectors\\.toSet\\(\\)\\);",
+                "Set<Long> $1 = Stream.of($2).flatMap(Collection::stream).collect(Collectors.toSet());");
+        processed = processed.replaceAll("\\bList\\s+([A-Za-z_$][\\w$]*)\\s*;",
+                "List<?> $1;");
+        processed = processed.replace("(List)before", "(List<?>)before");
+        return processed;
+    }
+
+    private String restoreMenuIdMappedListTypes(String source) {
+        if (!source.contains("Menu::getMenuId")) {
+            return source;
+        }
+        return source.replaceAll("\\bList\\s*<\\s*Menu\\s*>\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                        + "([^;\\n]*\\.map\\(Menu::getMenuId\\)[^;\\n]*;)",
+                "List<Long> $1 = $2");
+    }
+
+    private String restoreNoticeContentListFormatterTypes(String source, String className) {
+        boolean noticeFormatter = className != null && className.endsWith(".NoticeContentListFormatter");
+        if (!noticeFormatter && !source.contains("class NoticeContentListFormatter")) {
+            return source;
+        }
+        String processed = source.replace("((List)before).stream()", "((List<NoticeContentDto>)before).stream()")
+                .replace("((List)after).stream()", "((List<NoticeContentDto>)after).stream()");
+        if (processed.contains("List<NoticeContentDto>")) {
+            processed = ensureImport(processed, "com.otc.admin.domain.dto.notice.NoticeContentDto");
+        }
+        return processed;
+    }
+
+    private String restoreBooleanHandleResultTernaries(String source) {
+        String[] lines = source.split("\\n", -1);
+        boolean inBooleanResultMethod = false;
+        Pattern booleanResultMethod = Pattern.compile("\\bResult\\s*<\\s*Boolean\\s*>\\s+[A-Za-z_$][\\w$]*\\s*\\(");
+        Pattern ternaryHandleResult = Pattern.compile("return\\s+this\\.handleResult\\(\\(([^?;]+?)\\s*\\?\\s*1\\s*:\\s*0\\)\\);");
+        for (int i = 0; i < lines.length; i++) {
+            if (booleanResultMethod.matcher(lines[i]).find()) {
+                inBooleanResultMethod = true;
+            } else if (looksLikeMethodDeclaration(lines[i])) {
+                inBooleanResultMethod = false;
+            }
+            if (!inBooleanResultMethod) {
+                continue;
+            }
+            Matcher matcher = ternaryHandleResult.matcher(lines[i]);
+            if (matcher.find()) {
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "return this.handleResult(" + matcher.group(1).trim() + ");"));
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String restorePageDataGetListLocalTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> pageDataTypes = new LinkedHashMap<>();
+        Pattern pageDataDeclaration = Pattern.compile("\\bPageData\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*=");
+        for (int i = 0; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                pageDataTypes.clear();
+            }
+            Matcher pageDataMatcher = pageDataDeclaration.matcher(lines[i]);
+            while (pageDataMatcher.find()) {
+                pageDataTypes.put(pageDataMatcher.group(2), pageDataMatcher.group(1));
+            }
+            for (Map.Entry<String, String> entry : pageDataTypes.entrySet()) {
+                Pattern listFromPageData = Pattern.compile("\\bList(?:\\s*<[^>]+>)?\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                        + Pattern.quote(entry.getKey()) + "\\.getList\\(\\);");
+                Matcher listMatcher = listFromPageData.matcher(lines[i]);
+                if (listMatcher.find()) {
+                    lines[i] = listMatcher.replaceFirst(Matcher.quoteReplacement(
+                            "List<" + entry.getValue() + "> " + listMatcher.group(1)
+                                    + " = " + entry.getKey() + ".getList();"));
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String restoreRoleMenuListTypes(String source) {
+        if (!source.contains("roleMenuServie.getRoleMenusByRoleId")) {
+            return source;
+        }
+        String processed = source.replaceAll("\\bList\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                        + "(this\\.roleMenuServie\\.getRoleMenusByRoleId\\([^;\\n]*;)",
+                "List<TRoleMenu> $1 = $2");
+        if (processed.contains("List<TRoleMenu>")) {
+            processed = ensureImport(processed, "com.otc.admin.domain.entity.otc.TRoleMenu");
+        }
+        return processed;
+    }
+
+    private String restoreCheckedExceptionHandlers(String source) {
+        String processed = wrapReflectiveGetCountHelper(source);
+        processed = wrapClassForNameHelper(processed);
+        processed = catchByteArrayOutputStreamResourceClose(processed);
+        return wrapWorkbookCellLogicHelper(processed);
+    }
+
+    private String wrapReflectiveGetCountHelper(String source) {
+        if (!source.contains("public static long getCount(") || source.contains("获取导出总数失败")) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        boolean inGetCount = false;
+        boolean insertedTry = false;
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].contains("public static long getCount(")) {
+                inGetCount = true;
+                insertedTry = false;
+                continue;
+            }
+            if (!inGetCount) {
+                continue;
+            }
+            if (!insertedTry && lines[i].contains("Object result = null;")) {
+                String indent = leadingWhitespace(lines[i]);
+                lines[i] = indent + "try {\n" + indent + "    " + lines[i].trim();
+                insertedTry = true;
+                continue;
+            }
+            if (insertedTry && lines[i].trim().equals("return 0L;")) {
+                String indent = leadingWhitespace(lines[i]);
+                lines[i] = indent + "}\n"
+                        + indent + "catch (Exception e) {\n"
+                        + indent + "    log.error(\"获取导出总数失败 -> {}\", ExceptionUtil.stacktraceToString((Throwable)e));\n"
+                        + indent + "    throw new BusinessException(\"获取导出总数失败\");\n"
+                        + indent + "}\n"
+                        + lines[i];
+                inGetCount = false;
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String wrapClassForNameHelper(String source) {
+        if (!source.contains("private static Class<?> getClazz(String returnType)")
+                || source.contains("catch (ClassNotFoundException e)")) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        boolean inGetClazz = false;
+        String methodIndent = "";
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].contains("private static Class<?> getClazz(String returnType)")) {
+                inGetClazz = true;
+                methodIndent = leadingWhitespace(lines[i]);
+                continue;
+            }
+            if (!inGetClazz) {
+                continue;
+            }
+            if (lines[i].contains("return Class.forName(returnType);")) {
+                String indent = leadingWhitespace(lines[i]);
+                lines[i] = indent + "try {\n" + indent + "    return Class.forName(returnType);";
+                continue;
+            }
+            if (lines[i].equals(methodIndent + "}")) {
+                String indent = methodIndent + "    ";
+                lines[i] = indent + "}\n"
+                        + indent + "catch (ClassNotFoundException e) {\n"
+                        + indent + "    throw new RuntimeException(e);\n"
+                        + indent + "}\n"
+                        + lines[i];
+                break;
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String catchByteArrayOutputStreamResourceClose(String source) {
+        if (!source.contains("try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();)")
+                && !source.contains("try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();){")) {
+            return source;
+        }
+        if (source.contains("throw new RuntimeException(e);\n        }\n        return byteArrayInputStream;")) {
+            return source;
+        }
+        return source.replaceFirst("\\n(\\s*)return byteArrayInputStream;",
+                "\n$1catch (Exception e) {\n"
+                        + "$1    throw new RuntimeException(e);\n"
+                        + "$1}\n"
+                        + "$1return byteArrayInputStream;");
+    }
+
+    private String wrapWorkbookCellLogicHelper(String source) {
+        if (!source.contains("InputStream cellLogic(") || !source.contains("new XSSFWorkbook(")) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        boolean inCellLogic = false;
+        boolean insertedTry = false;
+        boolean returnSeen = false;
+        String methodIndent = "";
+        for (int i = 0; i < lines.length; i++) {
+            if (lines[i].contains("InputStream cellLogic(")) {
+                inCellLogic = true;
+                insertedTry = false;
+                returnSeen = false;
+                methodIndent = leadingWhitespace(lines[i]);
+                continue;
+            }
+            if (!inCellLogic) {
+                continue;
+            }
+            if (!insertedTry && lines[i].contains("XSSFWorkbook workbook = new XSSFWorkbook(")) {
+                String indent = leadingWhitespace(lines[i]);
+                lines[i] = indent + "try {\n" + indent + "    " + lines[i].trim();
+                insertedTry = true;
+                continue;
+            }
+            if (insertedTry && lines[i].contains("return new ByteArrayInputStream(")) {
+                returnSeen = true;
+                continue;
+            }
+            if (insertedTry && returnSeen && lines[i].equals(methodIndent + "}")) {
+                String indent = methodIndent + "    ";
+                lines[i] = indent + "}\n"
+                        + indent + "catch (Exception e) {\n"
+                        + indent + "    throw new RuntimeException(e);\n"
+                        + indent + "}\n"
+                        + lines[i];
+                break;
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String leadingWhitespace(String line) {
+        int index = 0;
+        while (index < line.length() && Character.isWhitespace(line.charAt(index))) {
+            index++;
+        }
+        return line.substring(0, index);
+    }
+
+    private String castGenericReflectionFieldAccess(String source) {
+        if (!source.contains("Function<T, K> createFieldFunction")) {
+            return source;
+        }
+        return source.replace("return field.get(obj);", "return (K)field.get(obj);");
     }
 
     private String restoreLambdaQueryChainListElementTypes(String source) {
@@ -697,7 +1239,7 @@ public class SourcePostProcessor {
             }
 
             Matcher collectMatcher = collectedFromTypedList.matcher(lines[i]);
-            if (collectMatcher.find()) {
+            if (!lines[i].contains(".map(") && collectMatcher.find()) {
                 String elementType = listElementTypes.get(collectMatcher.group(3));
                 if (elementType != null) {
                     lines[i] = collectMatcher.replaceFirst(Matcher.quoteReplacement(

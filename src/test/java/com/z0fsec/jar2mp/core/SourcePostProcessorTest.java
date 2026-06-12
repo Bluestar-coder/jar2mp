@@ -1378,4 +1378,295 @@ class SourcePostProcessorTest {
         assertFalse(processed.contains("case 2:"));
         assertFalse(processed.contains("case 5:"));
     }
+
+    @Test
+    void restoresPageInfoTypeFromMapstructMethodParameterContext() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import com.ochat.framework.common.pojo.vo.PageInfo;\n"
+                        + "import demo.mapstruct.GroupGameMapstruct;\n\n"
+                        + "class Sample {\n"
+                        + "    void load() {\n"
+                        + "        PageInfo resp = api.orderPage(req);\n"
+                        + "        resp.getRowList().stream().map(row -> {\n"
+                        + "            Dto dto = GroupGameMapstruct.INSTANCE.toDto(row);\n"
+                        + "            return dto;\n"
+                        + "        }).collect(Collectors.toList());\n"
+                        + "    }\n"
+                        + "}\n",
+                "demo.Sample",
+                Map.of(),
+                Map.of("GroupGameMapstruct", Map.of("toDto", "com.ochat.group.game.pojo.resp.OrderResp")));
+
+        assertTrue(processed.contains("import com.ochat.group.game.pojo.resp.OrderResp;"));
+        assertTrue(processed.contains("PageInfo<OrderResp> resp = api.orderPage(req);"));
+    }
+
+    @Test
+    void restoresPageInfoTypeFromCastMapstructInstanceCall() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import com.ochat.framework.common.pojo.vo.PageInfo;\n"
+                        + "import demo.mapstruct.SendCodeMapstruct;\n\n"
+                        + "class Sample {\n"
+                        + "    void load() {\n"
+                        + "        PageInfo apiPage = api.getPage(req);\n"
+                        + "        apiPage.getRowList().stream().map(arg_0 -> "
+                        + "((SendCodeMapstruct)SendCodeMapstruct.INSTANCE).toDto(arg_0))"
+                        + ".collect(Collectors.toList());\n"
+                        + "    }\n"
+                        + "}\n",
+                "demo.Sample",
+                Map.of(),
+                Map.of("SendCodeMapstruct", Map.of("toDto", "com.ochat.sms.pojo.resp.SendCodeResp")));
+
+        assertTrue(processed.contains("import com.ochat.sms.pojo.resp.SendCodeResp;"));
+        assertTrue(processed.contains("PageInfo<SendCodeResp> apiPage = api.getPage(req);"));
+    }
+
+    @Test
+    void restoresPageInfoTypeFromLocalMapperMethodParameter() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import com.ochat.framework.common.pojo.vo.PageInfo;\n"
+                        + "import com.ochat.user.pojo.resp.DeviceResp;\n\n"
+                        + "class Sample {\n"
+                        + "    void load() {\n"
+                        + "        PageInfo pageInfo = api.queryPage(req);\n"
+                        + "        pageInfo.getRowList().stream().map(arg_0 -> this.toDTO(arg_0)).toList();\n"
+                        + "    }\n"
+                        + "    private Dto toDTO(DeviceResp resp) { return new Dto(); }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageInfo<DeviceResp> pageInfo = api.queryPage(req);"));
+    }
+
+    @Test
+    void restoresPairListTypeFromTimeSplitterAssignment() {
+        String processed = new SourcePostProcessor().process(
+                "List<Pair> timeSegments = TimeSplitter.splitTimeRange(startDateTime, endDateTime);\n"
+                        + "for (Pair segment : timeSegments) {\n"
+                        + "    LocalDateTime start = (LocalDateTime)segment.getKey();\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(
+                "List<Pair<LocalDateTime, LocalDateTime>> timeSegments = TimeSplitter.splitTimeRange"));
+        assertTrue(processed.contains("for (Pair<LocalDateTime, LocalDateTime> segment : timeSegments)"));
+    }
+
+    @Test
+    void restoresFieldDataScanListTypesAndImports() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import com.utils.FieldData;\n"
+                        + "import java.util.ArrayList;\n"
+                        + "import java.util.List;\n\n"
+                        + "class Sample {\n"
+                        + "    void scan() {\n"
+                        + "        List<FieldData> fieldDataList = encryptReplaceComponent.scanList(row);\n"
+                        + "        List collect = fieldDataList.stream().map(FieldData::getField)"
+                        + ".collect(Collectors.toList());\n"
+                        + "        ArrayList ignoreAnnotations = Lists.newArrayList(new Class[]{TableId.class});\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("import java.lang.annotation.Annotation;"));
+        assertTrue(processed.contains("import java.lang.reflect.Field;"));
+        assertTrue(processed.contains("List<FieldData<Object>> fieldDataList = encryptReplaceComponent.scanList(row);"));
+        assertTrue(processed.contains("List<Field> collect = fieldDataList.stream()"));
+        assertTrue(processed.contains("ArrayList<Class<? extends Annotation>> ignoreAnnotations = "
+                + "Lists.newArrayList(TableId.class);"));
+    }
+
+    @Test
+    void castsReflectionFieldGetterResultToGenericFunctionType() {
+        String processed = new SourcePostProcessor().process(
+                "public static <T, K> Function<T, K> createFieldFunction(String fieldName, Class<T> clazz) {\n"
+                        + "    return obj -> {\n"
+                        + "        try {\n"
+                        + "            return field.get(obj);\n"
+                        + "        } catch (IllegalAccessException e) {\n"
+                        + "            throw new RuntimeException(e);\n"
+                        + "        }\n"
+                        + "    };\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("return (K)field.get(obj);"));
+    }
+
+    @Test
+    void restoresRawListLongValueOfStreamConversion() {
+        String processed = new SourcePostProcessor().process(
+                "List<Long> ids = ((List)source).stream().map(Long::valueOf).collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains(
+                "List<Long> ids = ((List<?>)source).stream().map(String::valueOf)"
+                        + ".map(Long::valueOf).collect(Collectors.toList());"));
+    }
+
+    @Test
+    void restoresMenuFormatterRawGenericCollections() {
+        String processed = new SourcePostProcessor().process(
+                "import com.otc.admin.domain.entity.Menu;\n"
+                        + "class Sample {\n"
+                        + "    void update(MethodMetaData metaData) {\n"
+                        + "        List befMenuBefore = (List)metaData.getObject(\"menuList\");\n"
+                        + "        List<Long> afterMenuBefore = Optional.ofNullable(this.SysMenuService.listMenu("
+                        + "((List)source).stream().map(Long::valueOf).collect(Collectors.toList())))"
+                        + ".orElseGet(ArrayList::new);\n"
+                        + "        Map befCollect = befMenuBefore.stream().filter(e -> e.getMenuType().equals(\"3\"))"
+                        + ".collect(Collectors.groupingBy(Menu::getParentId, Collectors.toList()));\n"
+                        + "        Set keys = Stream.of(befCollect.keySet(), aftCollect.keySet())"
+                        + ".flatMap(Collection::stream).collect(Collectors.toSet());\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<Menu> befMenuBefore = (List<Menu>)metaData.getObject(\"menuList\");"));
+        assertTrue(processed.contains("List<Menu> afterMenuBefore = Optional.ofNullable"));
+        assertTrue(processed.contains("((List<?>)source).stream().map(String::valueOf).map(Long::valueOf)"));
+        assertTrue(processed.contains("Map<Long, List<Menu>> befCollect = befMenuBefore.stream()"));
+        assertTrue(processed.contains("Set<Long> keys = Stream.of(befCollect.keySet(), aftCollect.keySet())"));
+    }
+
+    @Test
+    void doesNotOverwriteMappedStreamResultTypeWithSourceListType() {
+        String processed = new SourcePostProcessor().process(
+                "List<Menu> menus = loadMenus();\n"
+                        + "List<Long> ids = menus.stream().filter(e -> e.getMenuType().equals(\"3\"))"
+                        + ".map(Menu::getMenuId).collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("List<Long> ids = menus.stream()"));
+        assertFalse(processed.contains("List<Menu> ids = menus.stream()"));
+    }
+
+    @Test
+    void restoresMenuIdMappedListTypeAfterEarlierWrongInference() {
+        String processed = new SourcePostProcessor().process(
+                "import com.otc.admin.domain.entity.Menu;\n"
+                        + "class Sample {\n"
+                        + "    void load() {\n"
+                        + "        List<Menu> menus = loadMenus();\n"
+                        + "        List<Menu> ids = menus.stream().filter(e -> e.getMenuType().equals(\"3\"))"
+                        + ".map(Menu::getMenuId).collect(Collectors.toList());\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<Long> ids = menus.stream()"));
+    }
+
+    @Test
+    void restoresNoticeContentListFormatterCasts() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import java.util.List;\n"
+                        + "import java.util.stream.Collectors;\n"
+                        + "class NoticeContentListFormatter {\n"
+                        + "    void save(Object before) {\n"
+                        + "        ((List)before).stream().map(c -> c.getTitle() + c.getContent())"
+                        + ".collect(Collectors.joining(\",\"));\n"
+                        + "    }\n"
+                        + "}\n",
+                "demo.NoticeContentListFormatter");
+
+        assertTrue(processed.contains("import com.otc.admin.domain.dto.notice.NoticeContentDto;"));
+        assertTrue(processed.contains("((List<NoticeContentDto>)before).stream()"));
+    }
+
+    @Test
+    void restoresBooleanHandleResultTernary() {
+        String processed = new SourcePostProcessor().process(
+                "public Result<Boolean> check() {\n"
+                        + "    Role result = service.find();\n"
+                        + "    return this.handleResult((result == null ? 1 : 0));\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("return this.handleResult(result == null);"));
+    }
+
+    @Test
+    void restoresPageDataGetListLocalTypeFromPageDataVariable() {
+        String processed = new SourcePostProcessor().process(
+                "PageData<GroupsMemberListDTO> pageData = service.query();\n"
+                        + "List<GroupMember> groupsMemberListDTOList = pageData.getList();\n"
+                        + "List<Long> uids = groupsMemberListDTOList.stream().map(GroupMember::getUid)"
+                        + ".collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("List<GroupsMemberListDTO> groupsMemberListDTOList = pageData.getList();"));
+        assertTrue(processed.contains("groupsMemberListDTOList.stream().map(GroupsMemberListDTO::getUid)"));
+    }
+
+    @Test
+    void restoresRoleMenuListTypeFromRoleMenuServiceCall() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import java.util.List;\n"
+                        + "class RoleController {\n"
+                        + "    void load(String roleId) {\n"
+                        + "        List list = this.roleMenuServie.getRoleMenusByRoleId(roleId);\n"
+                        + "        list.stream().map(roleMenu -> String.valueOf(roleMenu.getMenuId()))"
+                        + ".collect(Collectors.toList());\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("import com.otc.admin.domain.entity.otc.TRoleMenu;"));
+        assertTrue(processed.contains("List<TRoleMenu> list = this.roleMenuServie.getRoleMenusByRoleId(roleId);"));
+    }
+
+    @Test
+    void restoresCheckedExceptionHandlingForReflectiveCountHelper() {
+        String processed = new SourcePostProcessor().process(
+                "public static long getCount(boolean methodAcceptsQueryRequest, Method method, "
+                        + "Object instance, Object paramObj) {\n"
+                        + "    Object result = null;\n"
+                        + "    result = method.invoke(instance, paramObj);\n"
+                        + "    return 0L;\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("try {\n        Object result = null;"));
+        assertTrue(processed.contains("catch (Exception e)"));
+        assertTrue(processed.contains("throw new BusinessException(\"获取导出总数失败\");"));
+    }
+
+    @Test
+    void restoresCheckedExceptionHandlingForClassForNameHelper() {
+        String processed = new SourcePostProcessor().process(
+                "private static Class<?> getClazz(String returnType) {\n"
+                        + "    return Class.forName(returnType);\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("try {"));
+        assertTrue(processed.contains("return Class.forName(returnType);"));
+        assertTrue(processed.contains("catch (ClassNotFoundException e)"));
+    }
+
+    @Test
+    void catchesByteArrayOutputStreamTryWithResourceCloseFailure() {
+        String processed = new SourcePostProcessor().process(
+                "public static InputStream exportMultipleSheets() {\n"
+                        + "    ByteArrayInputStream byteArrayInputStream;\n"
+                        + "    try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();){\n"
+                        + "        byteArrayInputStream = new ByteArrayInputStream(outputStream.toByteArray());\n"
+                        + "    }\n"
+                        + "    return byteArrayInputStream;\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("catch (Exception e) {\n        throw new RuntimeException(e);\n    }"));
+    }
+
+    @Test
+    void restoresWorkbookCellLogicCheckedExceptionHandling() {
+        String processed = new SourcePostProcessor().process(
+                "public static <T> InputStream cellLogic(ByteArrayInputStream input, List<T> allData, Class<T> clazz) {\n"
+                        + "    if (cell == null) {\n"
+                        + "        return input;\n"
+                        + "    }\n"
+                        + "    XSSFWorkbook workbook = new XSSFWorkbook((InputStream)input);\n"
+                        + "    workbook.write((OutputStream)out);\n"
+                        + "    workbook.close();\n"
+                        + "    return new ByteArrayInputStream(out.toByteArray());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("try {\n        XSSFWorkbook workbook = new XSSFWorkbook"));
+        assertTrue(processed.contains("catch (Exception e) {\n        throw new RuntimeException(e);\n    }"));
+    }
 }
