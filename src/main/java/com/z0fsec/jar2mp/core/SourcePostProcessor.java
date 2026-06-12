@@ -64,6 +64,15 @@ public class SourcePostProcessor {
     private static final Pattern GENERIC_METHOD_DECLARATION = Pattern.compile(
             "(?m)^\\s*(?:(?:public|protected|private|static|final|synchronized)\\s+)*"
                     + "([A-Za-z_$][\\w$.]*\\s*<[^\\n;{}]+>)\\s+([A-Za-z_$][\\w$]*)\\s*\\(");
+    private static final Pattern PAGE_DATA_RESULT_METHOD_DECLARATION = Pattern.compile(
+            "\\bResult\\s*<\\s*PageData\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s*>\\s+"
+                    + "[A-Za-z_$][\\w$]*\\s*\\(");
+    private static final Pattern TYPED_LIST_DECLARATION = Pattern.compile(
+            "\\bList\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s+([A-Za-z_$][\\w$]*)\\b");
+    private static final Pattern CHAR_SEQUENCE_SPLIT_ARRAY = Pattern.compile(
+            "(?m)^(\\s*)CharSequence\\[\\]\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*\\.split\\([^;\\n]*\\);)");
+    private static final Pattern RAW_ARRAY_LIST_DECLARATION = Pattern.compile(
+            "(?m)^(\\s*)ArrayList\\s+([A-Za-z_$][\\w$]*)\\s*;");
 
     public String process(String source) {
         return process(source, null);
@@ -83,14 +92,20 @@ public class SourcePostProcessor {
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
         processed = removeParameterArrayCasts(processed);
+        processed = restoreStringSplitArrayTypes(processed);
+        processed = removeGuavaListFactoryCasts(processed);
+        processed = restoreStringListLocalsFromFactoryAssignments(processed);
         processed = removeRepeatedValidationAnnotations(processed);
         processed = addListElementTypes(processed);
         processed = addOptionalElementTypes(processed);
         processed = addNumericGenericElementTypes(processed);
         processed = addObjectElementTypesToRawListCasts(processed);
         processed = restoreLambdaQueryWrapperEntityTypes(processed);
+        processed = restoreLambdaQueryChainWrapperEntityTypes(processed);
         processed = restorePageInfoRowListElementTypes(processed);
         processed = restoreLocalTypesFromGenericMethodReturns(processed);
+        processed = restorePageDataLocalsFromResultReturnTypes(processed);
+        processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
         processed = widenExecutionExceptionCauseLocals(processed);
         processed = replaceAnsiTextSyntheticOuterReferences(processed);
         processed = hoistForLoopCountersReferencedByLaterLoops(processed);
@@ -298,6 +313,86 @@ public class SourcePostProcessor {
         return processed;
     }
 
+    private String restoreLambdaQueryChainWrapperEntityTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (!line.contains("LambdaQueryChainWrapper") || !line.contains("::")) {
+                continue;
+            }
+            String entityType = firstLambdaQueryChainWrapperMethodReferenceType(line);
+            if (entityType == null) {
+                continue;
+            }
+            line = line.replace("(LambdaQueryChainWrapper)", "(LambdaQueryChainWrapper<" + entityType + ">)");
+            lines[i] = line;
+        }
+        return String.join("\n", lines);
+    }
+
+    private String firstLambdaQueryChainWrapperMethodReferenceType(String line) {
+        int wrapperStart = line.indexOf("(LambdaQueryChainWrapper");
+        if (wrapperStart < 0) {
+            wrapperStart = line.indexOf(".lambdaQuery()");
+        }
+        String search = wrapperStart >= 0 ? line.substring(wrapperStart) : line;
+        Matcher matcher = METHOD_REFERENCE_TYPE.matcher(search);
+        if (!matcher.find()) {
+            return null;
+        }
+        return matcher.group(1);
+    }
+
+    private String restorePageDataLocalsFromResultReturnTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        String currentElementType = null;
+        Map<String, String> pageDataLocals = new LinkedHashMap<>();
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            Matcher methodMatcher = PAGE_DATA_RESULT_METHOD_DECLARATION.matcher(line);
+            if (methodMatcher.find()) {
+                currentElementType = methodMatcher.group(1);
+                pageDataLocals.clear();
+            } else if (looksLikeMethodDeclaration(line)) {
+                currentElementType = null;
+                pageDataLocals.clear();
+            }
+            if (currentElementType == null) {
+                continue;
+            }
+
+            Matcher pageDataMatcher = Pattern.compile("\\bPageData\\s+([A-Za-z_$][\\w$]*)\\s*([;=])")
+                    .matcher(line);
+            StringBuffer pageDataBuffer = new StringBuffer();
+            while (pageDataMatcher.find()) {
+                String localName = pageDataMatcher.group(1);
+                pageDataLocals.put(localName, currentElementType);
+                pageDataMatcher.appendReplacement(pageDataBuffer, Matcher.quoteReplacement(
+                        "PageData<" + currentElementType + "> " + localName) + pageDataMatcher.group(2));
+            }
+            pageDataMatcher.appendTail(pageDataBuffer);
+            line = pageDataBuffer.toString();
+
+            for (Map.Entry<String, String> entry : pageDataLocals.entrySet()) {
+                Pattern listFromPageData = Pattern.compile("^(\\s*)List\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                        + Pattern.quote(entry.getKey())
+                        + "\\.getList\\(\\);");
+                Matcher listMatcher = listFromPageData.matcher(line);
+                if (listMatcher.find()) {
+                    line = listMatcher.replaceFirst(Matcher.quoteReplacement(
+                            listMatcher.group(1) + "List<" + entry.getValue() + "> "
+                                    + listMatcher.group(2) + " = " + entry.getKey() + ".getList();"));
+                }
+            }
+            lines[i] = line;
+        }
+        return String.join("\n", lines);
+    }
+
+    private boolean looksLikeMethodDeclaration(String line) {
+        return line.matches("\\s*(?:public|protected|private)\\s+[^=;{}]+\\([^;{}]*\\)\\s*\\{?\\s*");
+    }
+
     private String restoreLocalTypesFromGenericMethodReturns(String source) {
         Matcher declarationMatcher = GENERIC_METHOD_DECLARATION.matcher(source);
         Map<String, String> returnTypes = new LinkedHashMap<>();
@@ -324,6 +419,71 @@ public class SourcePostProcessor {
             processed = buffer.toString();
         }
         return processed;
+    }
+
+    private String alignStreamMethodReferenceOwnersWithListElementTypes(String source) {
+        Matcher declarationMatcher = TYPED_LIST_DECLARATION.matcher(source);
+        Map<String, String> listElementTypes = new LinkedHashMap<>();
+        while (declarationMatcher.find()) {
+            listElementTypes.put(declarationMatcher.group(2), declarationMatcher.group(1));
+        }
+
+        String processed = source;
+        for (Map.Entry<String, String> entry : listElementTypes.entrySet()) {
+            Pattern streamMap = Pattern.compile("\\b"
+                    + Pattern.quote(entry.getKey())
+                    + "\\.stream\\(\\)\\.map\\(\\s*([A-Za-z_$][\\w$.]*)::");
+            Matcher matcher = streamMap.matcher(processed);
+            StringBuffer buffer = new StringBuffer();
+            while (matcher.find()) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                        entry.getKey() + ".stream().map(" + entry.getValue() + "::"));
+            }
+            matcher.appendTail(buffer);
+            processed = buffer.toString();
+        }
+        return processed;
+    }
+
+    private String restoreStringSplitArrayTypes(String source) {
+        Matcher matcher = CHAR_SEQUENCE_SPLIT_ARRAY.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "String[] " + matcher.group(2) + " = " + matcher.group(3)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String removeGuavaListFactoryCasts(String source) {
+        String processed = source.replaceAll("Lists\\.newArrayList\\(\\s*\\(Object\\[\\]\\)\\s*",
+                "Lists.newArrayList(");
+        return processed.replaceAll("Lists\\.newArrayList\\(\\s*\\(Iterable\\)\\s*", "Lists.newArrayList(");
+    }
+
+    private String restoreStringListLocalsFromFactoryAssignments(String source) {
+        Matcher matcher = RAW_ARRAY_LIST_DECLARATION.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String localName = matcher.group(2);
+            if (isAssignedFromStringListFactory(source, localName)) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                        matcher.group(1) + "java.util.List<String> " + localName + ";"));
+            } else {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group()));
+            }
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private boolean isAssignedFromStringListFactory(String source, String localName) {
+        Pattern arraysAsList = Pattern.compile("\\b" + Pattern.quote(localName)
+                + "\\s*=\\s*Arrays\\.asList\\s*\\(");
+        Pattern annotationValues = Pattern.compile("\\b" + Pattern.quote(localName)
+                + "\\s*=\\s*Lists\\.newArrayList\\s*\\(\\s*[^;\\n]*\\.value\\(\\)\\s*\\)");
+        return arraysAsList.matcher(source).find() && annotationValues.matcher(source).find();
     }
 
     private String normalizeGenericType(String type) {

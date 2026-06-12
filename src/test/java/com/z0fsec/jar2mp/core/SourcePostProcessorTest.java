@@ -158,6 +158,62 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresPageDataAndListTypesFromMethodReturnType() {
+        String processed = new SourcePostProcessor().process(
+                "public Result<PageData<GroupsMemberListDTO>> pageInfo() {\n"
+                        + "    PageData pageData = this.groupMemberService.queryByPage(req, pageRequest);\n"
+                        + "    List groupsMemberListDTOList = pageData.getList();\n"
+                        + "    List uids = groupsMemberListDTOList.stream().map(GroupsMemberListDTO::getUid).collect(Collectors.toList());\n"
+                        + "    return this.handleResult(pageData);\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageData<GroupsMemberListDTO> pageData"));
+        assertTrue(processed.contains("List<GroupsMemberListDTO> groupsMemberListDTOList = pageData.getList();"));
+    }
+
+    @Test
+    void restoresLambdaQueryChainWrapperEntityTypeFromMethodReferences() {
+        String processed = new SourcePostProcessor().process(
+                "return ((LambdaQueryChainWrapper)((LambdaQueryChainWrapper)this.contactsService.lambdaQuery()"
+                        + ".eq(Contacts::getUid, uid)).eq(Contacts::getStatus, 1)).list().stream()"
+                        + ".map(Contacts::getFriendUid).collect(Collectors.toSet());\n");
+
+        assertTrue(processed.contains("(LambdaQueryChainWrapper<Contacts>)this.contactsService.lambdaQuery()"));
+        assertTrue(processed.contains("(LambdaQueryChainWrapper<Contacts>)((LambdaQueryChainWrapper<Contacts>)"));
+    }
+
+    @Test
+    void alignsStreamMethodReferenceOwnerWithListElementType() {
+        String processed = new SourcePostProcessor().process(
+                "List<GroupsMemberListDTO> groupsMemberListDTOList = pageData.getList();\n"
+                        + "List uids = groupsMemberListDTOList.stream().map(GroupMember::getUid).collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("groupsMemberListDTOList.stream().map(GroupsMemberListDTO::getUid)"));
+    }
+
+    @Test
+    void restoresStringSplitArraysFromCharSequenceArrays() {
+        String processed = new SourcePostProcessor().process(
+                "CharSequence[] picArray = descriptionPic.split(\",\", -1);\n"
+                        + "String oldPic = picArray[i];\n");
+
+        assertTrue(processed.contains("String[] picArray = descriptionPic.split(\",\", -1);"));
+    }
+
+    @Test
+    void restoresStringListLocalsFromArraysAndGuavaListFactories() {
+        String processed = new SourcePostProcessor().process(
+                "ArrayList limitsKeys;\n"
+                        + "limitsKeys = Arrays.asList(request.getParameter(\"authorityKey\"));\n"
+                        + "limitsKeys = Lists.newArrayList((Object[])annotation.value());\n"
+                        + "Lists.newArrayList((Iterable)limitsKeys).stream().map(arg -> service.getGoogleVerify(arg));\n");
+
+        assertTrue(processed.contains("java.util.List<String> limitsKeys;"));
+        assertTrue(processed.contains("Lists.newArrayList(annotation.value())"));
+        assertTrue(processed.contains("Lists.newArrayList(limitsKeys).stream()"));
+    }
+
+    @Test
     void addsListElementTypeWhenEnhancedForUsesTypedElement() {
         String processed = new SourcePostProcessor().process(
                 "List findPetTypes = this.types.findPetTypes();\n"
