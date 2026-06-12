@@ -55,7 +55,7 @@ The summary also includes class bytecode and ZIP metadata fidelity details from
 each artifact-fidelity-summary.csv, plus the decompile parity risk summary and
 HIGH/MEDIUM method index from each decompile-parity-report.md. The LocalVariableTable missing-name count is limited
 to methods that need user parameter or local-variable names, excluding compiler-generated synthetic switch-map support
-classes. The source coverage gates
+classes and bridge methods. The source coverage gates
 require zero class parse failures and zero missing-source methods in both modes.
 EOF
 }
