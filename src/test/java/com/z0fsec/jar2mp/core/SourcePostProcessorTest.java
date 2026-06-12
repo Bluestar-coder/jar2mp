@@ -182,6 +182,53 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresPageInfoElementTypeFromRowListCast() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<RedPacketGameStatisticsDTO> getGameStatistics(GameStatisticsReq req) {\n"
+                        + "    PageInfo resp = this.redPacketGameStatisticsApi.getGameStatistics(req);\n"
+                        + "    List result = mapper.toDTO(((GameStatisticsPageResp)resp.getRowList().getFirst()).getRespList());\n"
+                        + "    return new PageData(result, resp.getTotal());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageInfo<GameStatisticsPageResp> resp ="));
+        assertFalse(processed.contains("PageInfo<RedPacketGameStatisticsDTO> resp"));
+    }
+
+    @Test
+    void ignoresCollectionCastsWhenInferringPageInfoElementType() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<ChannelPageForWebResp> page(ChannelReq req) {\n"
+                        + "    PageInfo resp = this.channelApi.page(req);\n"
+                        + "    if (CollectionUtils.isEmpty((Collection)resp.getRowList())) return new PageData();\n"
+                        + "    return new PageData(resp.getRowList(), resp.getTotal());\n"
+                        + "}\n");
+
+        assertFalse(processed.contains("PageInfo<Collection> resp"));
+    }
+
+    @Test
+    void scopesPageInfoElementTypesForRepeatedLocalNames() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<BuyOrderPageResp> buyPage() {\n"
+                        + "    PageInfo resp;\n"
+                        + "    if (!empty((resp = api.buy(req)).getRowList())) {\n"
+                        + "        List uids = resp.getRowList().stream().map(BuyOrderPageResp::getUid).toList();\n"
+                        + "    }\n"
+                        + "    return new PageData(resp.getRowList(), resp.getTotal());\n"
+                        + "}\n"
+                        + "public PageData<SellOrderInnerPageResp> sellPage() {\n"
+                        + "    PageInfo resp;\n"
+                        + "    if (!empty((resp = api.sell(req)).getRowList())) {\n"
+                        + "        List uids = resp.getRowList().stream().map(SellOrderInnerPageResp::getUid).toList();\n"
+                        + "    }\n"
+                        + "    return new PageData(resp.getRowList(), resp.getTotal());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageInfo<BuyOrderPageResp> resp;"));
+        assertTrue(processed.contains("PageInfo<SellOrderInnerPageResp> resp;"));
+    }
+
+    @Test
     void restoresLocalTypeFromGenericMethodReturnType() {
         String processed = new SourcePostProcessor().process(
                 "public void run(Long id) {\n"
@@ -461,6 +508,29 @@ class SourcePostProcessorTest {
                 "Map<Long, Object> groupNameMap = new HashMap<Long, Groups>();\n");
 
         assertTrue(processed.contains("Map<Long, Groups> groupNameMap = new HashMap<Long, Groups>();"));
+    }
+
+    @Test
+    void restoresMapEntryEnhancedForTypeFromKeyAndValueAssignments() {
+        String processed = new SourcePostProcessor().process(
+                "for (Map.Entry orderEntry : toBeRefundOrderMap.entrySet()) {\n"
+                        + "    Long orderId = orderEntry.getKey();\n"
+                        + "    ExchangeOrder exchangeOrder = (ExchangeOrder)orderEntry.getValue();\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("for (Map.Entry<Long, ExchangeOrder> orderEntry : "
+                + "toBeRefundOrderMap.entrySet())"));
+    }
+
+    @Test
+    void widensShiroFilterMapValuesToServletFilter() {
+        String processed = new SourcePostProcessor().process(
+                "LinkedHashMap<String, JWTFilter> filters = new LinkedHashMap<String, JWTFilter>();\n"
+                        + "filters.put(\"jwt\", new JWTFilter());\n"
+                        + "shiroFilterFactoryBean.setFilters(filters);\n");
+
+        assertTrue(processed.contains("LinkedHashMap<String, jakarta.servlet.Filter> filters = "
+                + "new LinkedHashMap<String, jakarta.servlet.Filter>();"));
     }
 
     @Test

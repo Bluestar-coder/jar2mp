@@ -128,6 +128,8 @@ public class SourcePostProcessor {
         processed = restoreRawListTypesFromEnhancedForUsage(processed);
         processed = restoreIdentifyMapTypes(processed);
         processed = restoreMapValueTypesFromInitializers(processed);
+        processed = restoreMapEntryEnhancedForTypes(processed);
+        processed = widenShiroFilterMapTypes(processed);
         processed = restoreGenericListMethodTypeVariableLocals(processed);
         processed = restorePageDataLocalsFromResultReturnTypes(processed);
         processed = restoreRawListElementTypesFromStreamMethodReferences(processed);
@@ -355,20 +357,48 @@ public class SourcePostProcessor {
     }
 
     private String restorePageInfoRowListElementTypes(String source) {
-        Matcher matcher = PAGE_INFO_ROW_LIST_METHOD_REFERENCE.matcher(source);
-        Map<String, String> pageInfoTypes = new LinkedHashMap<>();
-        while (matcher.find()) {
-            pageInfoTypes.putIfAbsent(matcher.group(1), matcher.group(2));
+        String[] lines = source.split("\\n", -1);
+        Pattern rowListCast = Pattern.compile("\\(\\s*([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)\\s*\\)\\s*"
+                + "([A-Za-z_$][\\w$]*)\\.getRowList\\(\\)");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher methodReferenceMatcher = PAGE_INFO_ROW_LIST_METHOD_REFERENCE.matcher(lines[i]);
+            while (methodReferenceMatcher.find()) {
+                typeNearestPageInfoDeclaration(lines, i, methodReferenceMatcher.group(1),
+                        methodReferenceMatcher.group(2));
+            }
+            Matcher castMatcher = rowListCast.matcher(lines[i]);
+            while (castMatcher.find()) {
+                if (isBroadCollectionCastType(castMatcher.group(1))) {
+                    continue;
+                }
+                typeNearestPageInfoDeclaration(lines, i, castMatcher.group(2), castMatcher.group(1));
+            }
         }
-        String processed = source;
-        for (Map.Entry<String, String> entry : pageInfoTypes.entrySet()) {
-            Pattern declaration = Pattern.compile(
-                    "\\bPageInfo\\s+" + Pattern.quote(entry.getKey()) + "\\s*([;=])");
-            processed = declaration.matcher(processed)
-                    .replaceAll(Matcher.quoteReplacement("PageInfo<" + entry.getValue() + "> "
-                            + entry.getKey()) + "$1");
+        return String.join("\n", lines);
+    }
+
+    private boolean isBroadCollectionCastType(String typeName) {
+        return typeName.equals("Collection") || typeName.equals("java.util.Collection")
+                || typeName.equals("List") || typeName.equals("java.util.List")
+                || typeName.equals("Object") || typeName.equals("java.lang.Object");
+    }
+
+    private void typeNearestPageInfoDeclaration(String[] lines, int currentIndex, String pageInfoName,
+                                                String elementType) {
+        Pattern declaration = Pattern.compile("\\bPageInfo(?:\\s*<[^>]+>)?\\s+"
+                + Pattern.quote(pageInfoName) + "\\s*([;=])");
+        for (int i = currentIndex; i >= 0; i--) {
+            if (i != currentIndex && looksLikeMethodDeclaration(lines[i])) {
+                return;
+            }
+            Matcher matcher = declaration.matcher(lines[i]);
+            if (matcher.find()) {
+                String suffix = matcher.group(1).equals(";") ? ";" : " =";
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "PageInfo<" + elementType + "> " + pageInfoName + suffix));
+                return;
+            }
         }
-        return processed;
     }
 
     private String restoreLambdaQueryChainWrapperEntityTypes(String source) {
@@ -722,6 +752,83 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private String restoreMapEntryEnhancedForTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Pattern rawEntryFor = Pattern.compile("\\bfor\\s*\\(\\s*Map\\.Entry\\s+([A-Za-z_$][\\w$]*)\\s*:\\s*"
+                + "[^\\n;]+\\.entrySet\\(\\)\\s*\\)");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = rawEntryFor.matcher(lines[i]);
+            while (matcher.find()) {
+                String entryName = matcher.group(1);
+                String keyType = findEntryKeyType(lines, i + 1, entryName);
+                String valueType = findEntryValueType(lines, i + 1, entryName);
+                if (keyType == null || valueType == null) {
+                    continue;
+                }
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "for (Map.Entry<" + keyType + ", " + valueType + "> " + entryName + " : "
+                                + rawEntryForIterable(lines[i]) + ")"));
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String rawEntryForIterable(String line) {
+        Matcher matcher = Pattern.compile("\\bfor\\s*\\(\\s*Map\\.Entry\\s+[A-Za-z_$][\\w$]*\\s*:\\s*"
+                + "([^\\n;]+\\.entrySet\\(\\))\\s*\\)").matcher(line);
+        return matcher.find() ? matcher.group(1).trim() : "";
+    }
+
+    private String findEntryKeyType(String[] lines, int start, String entryName) {
+        Pattern keyAssignment = Pattern.compile("\\b([A-Za-z_$][\\w$.<>]*)\\s+[A-Za-z_$][\\w$]*\\s*=\\s*"
+                + Pattern.quote(entryName) + "\\.getKey\\(\\)");
+        return findEntryMemberType(lines, start, keyAssignment);
+    }
+
+    private String findEntryValueType(String[] lines, int start, String entryName) {
+        Pattern valueAssignment = Pattern.compile("\\b([A-Za-z_$][\\w$.<>]*)\\s+[A-Za-z_$][\\w$]*\\s*=\\s*"
+                + "(?:\\(([^)]+)\\))?" + Pattern.quote(entryName) + "\\.getValue\\(\\)");
+        return findEntryMemberType(lines, start, valueAssignment);
+    }
+
+    private String findEntryMemberType(String[] lines, int start, Pattern assignment) {
+        for (int i = start; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                return null;
+            }
+            Matcher matcher = assignment.matcher(lines[i]);
+            if (matcher.find()) {
+                String castType = matcher.groupCount() >= 2 ? matcher.group(2) : null;
+                return castType == null ? matcher.group(1) : castType.trim();
+            }
+            if (lines[i].matches("\\s*}\\s*")) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private String widenShiroFilterMapTypes(String source) {
+        Matcher setFiltersMatcher = Pattern.compile("\\.setFilters\\(\\s*([A-Za-z_$][\\w$]*)\\s*\\)").matcher(source);
+        String processed = source;
+        while (setFiltersMatcher.find()) {
+            String filtersName = setFiltersMatcher.group(1);
+            Pattern declaration = Pattern.compile("\\bLinkedHashMap\\s*<\\s*String\\s*,\\s*"
+                    + "[A-Za-z_$][\\w$.]*\\s*>\\s+" + Pattern.quote(filtersName)
+                    + "\\s*=\\s*new\\s+LinkedHashMap\\s*<\\s*String\\s*,\\s*[A-Za-z_$][\\w$.]*\\s*>\\s*\\(");
+            Matcher declarationMatcher = declaration.matcher(processed);
+            StringBuffer buffer = new StringBuffer();
+            while (declarationMatcher.find()) {
+                declarationMatcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                        "LinkedHashMap<String, jakarta.servlet.Filter> " + filtersName
+                                + " = new LinkedHashMap<String, jakarta.servlet.Filter>("));
+            }
+            declarationMatcher.appendTail(buffer);
+            processed = buffer.toString();
+        }
+        return processed;
     }
 
     private String restoreGenericListMethodTypeVariableLocals(String source) {
