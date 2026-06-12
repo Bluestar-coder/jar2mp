@@ -52,8 +52,8 @@ Reports:
 The source diff report lists reference-only Java files, generated-only Java files,
 and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
 The summary also includes class bytecode and ZIP metadata fidelity details from
-each artifact-fidelity-summary.csv, plus the decompile parity risk summary and
-HIGH/MEDIUM method index from each decompile-parity-report.md. The LocalVariableTable missing-name count is limited
+each artifact-fidelity-summary.csv, plus the decompile parity risk summary,
+HIGH/MEDIUM method index, and risk reason breakdown from each decompile-parity-report.md. The LocalVariableTable missing-name count is limited
 to methods that need user parameter or local-variable names, excluding compiler-generated synthetic switch-map support
 classes, bridge methods, enum support methods, lambda deserialization support methods, outer-this constructors,
 and monitor temporaries. The source coverage gates
@@ -230,6 +230,57 @@ parity_risk_count() {
       }
     }
   ' "${file}" 2>/dev/null || printf '%s\n' "${default_value}"
+}
+
+parity_risk_reason_counts() {
+  local file="$1"
+  local default_value="$2"
+  if [[ ! -f "${file}" ]]; then
+    printf '%s\n' "${default_value}"
+    return
+  fi
+  local rows
+  rows="$(
+    awk -F '|' '
+      /^## Risk method index$/ {
+        in_index = 1
+        seen_index = 1
+        next
+      }
+      in_index && /^## / {
+        in_index = 0
+      }
+      in_index && $0 ~ /^\|/ {
+        reason = $5
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", reason)
+        if (reason != "" && reason != "Reason" && reason != "---") {
+          count[reason]++
+        }
+      }
+      END {
+        if (!seen_index) {
+          exit 1
+        }
+        for (reason in count) {
+          printf "%d\t%s\n", count[reason], reason
+        }
+      }
+    ' "${file}" 2>/dev/null | sort -nr
+  )" || {
+    printf '%s\n' "${default_value}"
+    return
+  }
+  if [[ -z "${rows}" ]]; then
+    printf '%s\n' "none"
+    return
+  fi
+  printf '%s\n' "${rows}" | awk -F '\t' '{
+    printf "%s%s=%s", separator, $2, $1
+    separator = "; "
+  }
+  END {
+    printf "\n"
+  }'
 }
 
 count_java_files() {
@@ -502,6 +553,7 @@ run_restore_mode() {
   set_var "${prefix}_parity_high_methods" "$(parity_risk_count "${parity_report}" "HIGH" "missing")"
   set_var "${prefix}_parity_medium_methods" "$(parity_risk_count "${parity_report}" "MEDIUM" "missing")"
   set_var "${prefix}_parity_low_methods" "$(parity_risk_count "${parity_report}" "LOW" "missing")"
+  set_var "${prefix}_parity_risk_reasons" "$(parity_risk_reason_counts "${parity_report}" "missing")"
 }
 
 require_file() {
@@ -552,7 +604,7 @@ write_source_diff_report \
   "${ORIGINAL_JAR_ENTRIES}"
 
 {
-  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_project\n'
+  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_parity_risk_reasons,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_parity_risk_reasons,byte_exact_project\n'
   csv_field "otc-admin"; printf ','
   csv_field "${OTC_ADMIN_JAR}"; printf ','
   csv_field "${JAR_SIZE_BYTES}"; printf ','
@@ -595,6 +647,7 @@ write_source_diff_report \
   csv_field "${package_record_parity_high_methods}"; printf ','
   csv_field "${package_record_parity_medium_methods}"; printf ','
   csv_field "${package_record_parity_low_methods}"; printf ','
+  csv_field "${package_record_parity_risk_reasons}"; printf ','
   csv_field "${package_record_project_dir}"; printf ','
   csv_field "${byte_exact_exit_code}"; printf ','
   csv_field "${byte_exact_verification_summary}"; printf ','
@@ -624,6 +677,7 @@ write_source_diff_report \
   csv_field "${byte_exact_parity_high_methods}"; printf ','
   csv_field "${byte_exact_parity_medium_methods}"; printf ','
   csv_field "${byte_exact_parity_low_methods}"; printf ','
+  csv_field "${byte_exact_parity_risk_reasons}"; printf ','
   csv_field "${byte_exact_project_dir}"; printf '\n'
 } > "${CSV_REPORT}"
 
@@ -680,6 +734,11 @@ write_source_diff_report \
     "${byte_exact_parity_reflection_methods}" "${byte_exact_parity_invokedynamic_methods}" \
     "${byte_exact_parity_missing_lvt_methods}" "${byte_exact_parity_high_methods}" \
     "${byte_exact_parity_medium_methods}" "${byte_exact_parity_low_methods}"
+  printf '## Decompile parity risk reasons\n\n'
+  printf '| Mode | Reason counts |\n'
+  printf '| --- | --- |\n'
+  printf '| package-record | %s |\n' "${package_record_parity_risk_reasons}"
+  printf '| byte-exact | %s |\n\n' "${byte_exact_parity_risk_reasons}"
   printf '## Artifacts\n\n'
   printf '%s\n' "- package-record project: \`${package_record_project_dir}\`"
   printf '%s\n' "- package-record artifact: \`${package_record_artifact_path}\`"

@@ -23,6 +23,8 @@ bash -n "${SCRIPT}"
 
 script_source="$(cat "${SCRIPT}")"
 assert_contains "${script_source}" "Missing required LVT names" "summary refined lvt header"
+assert_contains "${script_source}" "package_record_parity_risk_reasons" "csv parity reason column"
+assert_contains "${script_source}" "Decompile parity risk reasons" "markdown parity reason section"
 
 help_output="$(bash "${SCRIPT}" --help)"
 assert_contains "${help_output}" "OTC_ADMIN_JAR" "sample path env"
@@ -38,4 +40,5 @@ assert_contains "${help_output}" "original JAR class presence" "source diff clas
 assert_contains "${help_output}" "class bytecode and ZIP metadata fidelity details" "artifact fidelity detail purpose"
 assert_contains "${help_output}" "decompile parity risk summary" "parity risk detail purpose"
 assert_contains "${help_output}" "HIGH/MEDIUM method index" "parity risk method index purpose"
+assert_contains "${help_output}" "risk reason breakdown" "parity risk reason breakdown purpose"
 assert_contains "${help_output}" "source coverage gates" "parity source coverage gates"
