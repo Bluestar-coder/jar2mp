@@ -60,6 +60,7 @@ and monitor temporaries. The source coverage gates
 require zero class parse failures and zero missing-source methods in both modes.
 Reflection risk is matched by java/lang/Class, java/lang/reflect, and known reflection utility owners rather than ordinary business method names.
 Invokedynamic details include bootstrap methods and arguments for lambda implementation targets or string-concat recipes.
+Risk method reasons distinguish lambda metafactory invokedynamic from generic invokedynamic.
 Pure StringConcatFactory string-concat invokedynamic calls are still counted as invokedynamic facts, but are not MEDIUM risks.
 EOF
 }
