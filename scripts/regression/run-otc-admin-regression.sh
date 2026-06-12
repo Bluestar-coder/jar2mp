@@ -330,8 +330,16 @@ classify_runtime_observation_gate() {
     printf '%s\n' "PASS_EXIT_ZERO"
     return
   fi
+  if [[ "${run_status}" == "TRACE_COLLECTED_HEALTHY_TIMEOUT" && "${runtime_score}" == "100" ]] && is_positive_integer "${runtime_events}"; then
+    printf '%s\n' "PASS_HEALTHY_TIMEOUT"
+    return
+  fi
   if [[ "${run_status}" == "TRACE_COLLECTED_TIMEOUT" ]] && is_positive_integer "${runtime_events}"; then
     printf '%s\n' "WARN_STARTED_TIMEOUT"
+    return
+  fi
+  if [[ "${run_status}" == "STARTUP_FAILED_TIMEOUT" ]]; then
+    printf '%s\n' "FAIL_STARTUP_FAILED_TIMEOUT"
     return
   fi
   if [[ "${run_status}" == "EXIT_ZERO" ]]; then
