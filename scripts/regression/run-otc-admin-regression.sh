@@ -52,8 +52,8 @@ Reports:
 The source diff report lists reference-only Java files, generated-only Java files,
 and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
 The summary also includes class bytecode and ZIP metadata fidelity details from
-each artifact-fidelity-summary.csv, plus the decompile parity risk summary from
-each decompile-parity-report.md. The LocalVariableTable missing-name count is limited
+each artifact-fidelity-summary.csv, plus the decompile parity risk summary and
+HIGH/MEDIUM method index from each decompile-parity-report.md. The LocalVariableTable missing-name count is limited
 to methods that need user parameter or local-variable names. The source coverage gates
 require zero class parse failures and zero missing-source methods in both modes.
 EOF
