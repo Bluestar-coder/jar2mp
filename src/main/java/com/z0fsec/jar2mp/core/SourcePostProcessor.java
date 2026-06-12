@@ -108,6 +108,8 @@ public class SourcePostProcessor {
         processed = unwrapSingleElementRedisSetOperationArrays(processed);
         processed = restoreStringSplitArrayTypes(processed);
         processed = removeGuavaListFactoryCasts(processed);
+        processed = removeGuavaPartitionListCasts(processed);
+        processed = unwrapSFunctionArraySelects(processed);
         processed = restoreStringListLocalsFromFactoryAssignments(processed);
         processed = addImmutableMapBuilderTypeArguments(processed);
         processed = removeRepeatedValidationAnnotations(processed);
@@ -124,12 +126,15 @@ public class SourcePostProcessor {
         processed = restoreLocalTypesFromGenericMethodReturns(processed);
         processed = restorePageInfoLocalsFromPageDataReturnTypes(processed);
         processed = restoreListLocalsFromListReturnTypes(processed);
+        processed = restoreListTypesFromStreamMapResults(processed);
         processed = restoreRawListTypesFromElementUsage(processed);
         processed = restoreStringObjectMapListTypes(processed);
         processed = restoreNestedListPartitionTypes(processed);
         processed = restoreRawListTypesFromEnhancedForUsage(processed);
         processed = restoreIdentifyMapTypes(processed);
+        processed = restoreGetBeansOfTypeMapTypes(processed);
         processed = restoreRawMapTypesFromCollectorsToMap(processed);
+        processed = restoreRawMapTypesFromGetOrDefaultDefaults(processed);
         processed = restoreMapValueTypesFromInitializers(processed);
         processed = restoreMapEntryEnhancedForTypes(processed);
         processed = widenShiroFilterMapTypes(processed);
@@ -605,8 +610,14 @@ public class SourcePostProcessor {
                     currentElementType = wrappedMethodMatcher.group(1);
                     methodStart = i;
                 } else if (looksLikeMethodDeclaration(line)) {
-                    currentElementType = null;
-                    methodStart = -1;
+                    Matcher pageDataMethodMatcher = PAGE_DATA_METHOD_DECLARATION.matcher(line);
+                    if (pageDataMethodMatcher.find()) {
+                        currentElementType = pageDataMethodMatcher.group(1);
+                        methodStart = i;
+                    } else {
+                        currentElementType = null;
+                        methodStart = -1;
+                    }
                 }
             }
             if (currentElementType == null || methodStart < 0) {
@@ -620,6 +631,62 @@ public class SourcePostProcessor {
             }
         }
         return String.join("\n", lines);
+    }
+
+    private String restoreListTypesFromStreamMapResults(String source) {
+        String[] lines = source.split("\\n", -1);
+        Pattern sameLineList = Pattern.compile("^(\\s*)List(?:\\s*<\\s*Object\\s*>)?\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*=\\s*([^;\\n]*\\.stream\\s*\\([^;\\n]*\\.map\\(\\s*"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::([A-Za-z_$][\\w$]*)[^;\\n]*;)");
+        Pattern assignment = Pattern.compile("\\b([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "[^;\\n]*\\.stream\\s*\\([^;\\n]*\\.map\\(\\s*"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::([A-Za-z_$][\\w$]*)");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher sameLineMatcher = sameLineList.matcher(lines[i]);
+            if (sameLineMatcher.find()) {
+                String elementType = inferStreamMapResultType(sameLineMatcher.group(4), sameLineMatcher.group(5));
+                if (elementType != null) {
+                    lines[i] = sameLineMatcher.replaceFirst(Matcher.quoteReplacement(
+                            sameLineMatcher.group(1) + "List<" + elementType + "> "
+                                    + sameLineMatcher.group(2) + " = " + sameLineMatcher.group(3)));
+                }
+            }
+
+            Matcher assignmentMatcher = assignment.matcher(lines[i]);
+            while (assignmentMatcher.find()) {
+                String elementType = inferStreamMapResultType(assignmentMatcher.group(2), assignmentMatcher.group(3));
+                if (elementType != null) {
+                    typePreviousListObjectDeclaration(lines, i, assignmentMatcher.group(1), elementType);
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String inferStreamMapResultType(String ownerType, String methodName) {
+        if (ownerType.equals("Long") || ownerType.equals("Integer") || ownerType.equals("String")
+                || ownerType.equals("Double") || ownerType.equals("Float") || ownerType.equals("BigDecimal")) {
+            return ownerType;
+        }
+        return inferGetterReturnType(methodName);
+    }
+
+    private void typePreviousListObjectDeclaration(String[] lines, int currentIndex, String listName,
+                                                   String elementType) {
+        Pattern declaration = Pattern.compile("\\bList\\s*<\\s*Object\\s*>\\s+"
+                + Pattern.quote(listName) + "\\s*([;=])");
+        for (int i = currentIndex; i >= 0; i--) {
+            if (i != currentIndex && looksLikeMethodDeclaration(lines[i])) {
+                return;
+            }
+            Matcher matcher = declaration.matcher(lines[i]);
+            if (matcher.find()) {
+                String suffix = matcher.group(1).equals(";") ? ";" : " =";
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "List<" + elementType + "> " + listName + suffix));
+                return;
+            }
+        }
     }
 
     private boolean isListReturnedBeforeNextMethod(String[] lines, int start, String localName) {
@@ -641,7 +708,8 @@ public class SourcePostProcessor {
     }
 
     private boolean isPassedToReturnCallBeforeNextMethod(String[] lines, int start, String localName) {
-        Pattern returned = Pattern.compile("\\breturn\\s+[^;\\n]+\\(\\s*" + Pattern.quote(localName) + "\\s*\\)\\s*;");
+        Pattern returned = Pattern.compile("\\breturn\\s+[^;\\n]+\\(\\s*" + Pattern.quote(localName)
+                + "\\s*(?:,|\\))");
         for (int i = start; i < lines.length; i++) {
             if (looksLikeMethodDeclaration(lines[i])) {
                 return false;
@@ -857,6 +925,98 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private String restoreGetBeansOfTypeMapTypes(String source) {
+        Matcher matcher = Pattern.compile("(?m)^(\\s*)Map\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "([^;\\n]*getBeansOfType\\(\\s*([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)"
+                + "\\.class\\s*\\);)").matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + "Map<String, " + matcher.group(4) + "> "
+                            + matcher.group(2) + " = " + matcher.group(3)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String restoreRawMapTypesFromGetOrDefaultDefaults(String source) {
+        String[] lines = source.split("\\n", -1);
+        Pattern rawMap = Pattern.compile("\\bMap\\s+([A-Za-z_$][\\w$]*)\\s*([;=])");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = rawMap.matcher(lines[i]);
+            while (matcher.find()) {
+                String mapName = matcher.group(1);
+                String[] keyAndValueTypes = findGetOrDefaultTypes(lines, i + 1, mapName);
+                if (keyAndValueTypes == null) {
+                    continue;
+                }
+                String suffix = matcher.group(2).equals(";") ? ";" : " =";
+                lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                        "Map<" + keyAndValueTypes[0] + ", " + keyAndValueTypes[1] + "> "
+                                + mapName + suffix));
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String[] findGetOrDefaultTypes(String[] lines, int start, String mapName) {
+        Pattern newDefault = Pattern.compile("\\b" + Pattern.quote(mapName)
+                + "\\.getOrDefault\\s*\\(\\s*([^,]+?)\\s*,\\s*new\\s+"
+                + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)\\s*\\(");
+        Pattern literalDefault = Pattern.compile("\\b" + Pattern.quote(mapName)
+                + "\\.getOrDefault\\s*\\(\\s*([^,]+?)\\s*,\\s*"
+                + "(Boolean\\.(?:TRUE|FALSE)|\"[^\"]*\"|\\d+L?|\\d+\\.\\d+)\\s*\\)");
+        for (int i = start; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                return null;
+            }
+            Matcher newMatcher = newDefault.matcher(lines[i]);
+            if (newMatcher.find()) {
+                String keyType = inferExpressionType(newMatcher.group(1));
+                if (keyType != null) {
+                    return new String[]{keyType, newMatcher.group(2)};
+                }
+            }
+            Matcher literalMatcher = literalDefault.matcher(lines[i]);
+            if (literalMatcher.find()) {
+                String keyType = inferExpressionType(literalMatcher.group(1));
+                String valueType = inferLiteralType(literalMatcher.group(2));
+                if (keyType != null && valueType != null) {
+                    return new String[]{keyType, valueType};
+                }
+            }
+        }
+        return null;
+    }
+
+    private String inferExpressionType(String expression) {
+        String trimmed = expression.trim();
+        if (trimmed.startsWith("\"")) {
+            return "String";
+        }
+        Matcher getter = Pattern.compile("\\.([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\)\\s*$").matcher(trimmed);
+        if (getter.find()) {
+            return inferGetterReturnType(getter.group(1));
+        }
+        return null;
+    }
+
+    private String inferLiteralType(String literal) {
+        if (literal.startsWith("Boolean.")) {
+            return "Boolean";
+        }
+        if (literal.startsWith("\"")) {
+            return "String";
+        }
+        if (literal.endsWith("L")) {
+            return "Long";
+        }
+        if (literal.contains(".")) {
+            return "Double";
+        }
+        return "Integer";
     }
 
     private String inferGetterReturnType(String methodName) {
@@ -1242,6 +1402,21 @@ public class SourcePostProcessor {
         String processed = source.replaceAll("Lists\\.newArrayList\\(\\s*\\(Object\\[\\]\\)\\s*",
                 "Lists.newArrayList(");
         return processed.replaceAll("Lists\\.newArrayList\\(\\s*\\(Iterable\\)\\s*", "Lists.newArrayList(");
+    }
+
+    private String removeGuavaPartitionListCasts(String source) {
+        return source.replaceAll("Lists\\.partition\\(\\s*\\(List\\)\\s*", "Lists.partition(");
+    }
+
+    private String unwrapSFunctionArraySelects(String source) {
+        Matcher matcher = Pattern.compile("\\.select\\(\\s*new\\s+SFunction\\s*\\[\\]\\s*\\{\\s*([^}]*)\\s*}\\s*\\)")
+                .matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(".select(" + matcher.group(1).trim() + ")"));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
     }
 
     private String restoreStringListLocalsFromFactoryAssignments(String source) {

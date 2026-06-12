@@ -488,6 +488,69 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresRawMapTypeFromGetOrDefaultDefaultValue() {
+        String processed = new SourcePostProcessor().process(
+                "Map map = queryPointsUserBalancelResp.getMap();\n"
+                        + "list.forEach(entity -> entity.setBalance(map.getOrDefault(entity.getUid(), "
+                        + "new BigDecimal(\"0\"))));\n");
+
+        assertTrue(processed.contains("Map<Long, BigDecimal> map = queryPointsUserBalancelResp.getMap();"));
+    }
+
+    @Test
+    void restoresGetBeansOfTypeMapTypeFromClassLiteral() {
+        String processed = new SourcePostProcessor().process(
+                "Map beansOfType = ApplicationContextUtils.getBeansOfType(CloseTimeoutOrderService.class);\n"
+                        + "beansOfType.forEach((beanName, bean) -> bean.executeScanAndClose(days));\n");
+
+        assertTrue(processed.contains("Map<String, CloseTimeoutOrderService> beansOfType = "
+                + "ApplicationContextUtils.getBeansOfType(CloseTimeoutOrderService.class);"));
+    }
+
+    @Test
+    void restoresListTypeFromStreamMapGetterResult() {
+        String processed = new SourcePostProcessor().process(
+                "List<PointsConsumptionUserDailyStatsSummaryDto> list;\n"
+                        + "List uidList = list.stream().map(PointsConsumptionUserDailyStatsSummaryDto::getUid)"
+                        + ".collect(Collectors.toList());\n");
+
+        assertTrue(processed.contains("List<Long> uidList = list.stream()"));
+    }
+
+    @Test
+    void restoresPreviousListObjectTypeFromStreamAssignment() {
+        String processed = new SourcePostProcessor().process(
+                "List<Object> uidList = new ArrayList();\n"
+                        + "if (StrUtil.isNotBlank(uids) && (uidList = Arrays.stream(uids.split(\",\"))"
+                        + ".map(Long::parseLong).toList()).size() > 100) {}\n");
+
+        assertTrue(processed.contains("List<Long> uidList = new ArrayList();"));
+    }
+
+    @Test
+    void unwrapsSFunctionArrayInLambdaWrapperSelect() {
+        String processed = new SourcePostProcessor().process(
+                "new LambdaQueryWrapper<SysChannelSourceConfig>().select(new SFunction[]{"
+                        + "SysChannelSourceConfig::getChannelSourceId, SysChannelSourceConfig::getChannelName})"
+                        + ".orderByAsc(SysChannelSourceConfig::getChannelSourceId);\n");
+
+        assertTrue(processed.contains(".select(SysChannelSourceConfig::getChannelSourceId, "
+                + "SysChannelSourceConfig::getChannelName)"));
+        assertFalse(processed.contains("new SFunction[]"));
+    }
+
+    @Test
+    void removesRawListCastFromGuavaPartitionSource() {
+        String processed = new SourcePostProcessor().process(
+                "List<User> userList;\n"
+                        + "Lists.partition((List)userList, (int)100).stream()"
+                        + ".map(elist -> elist.stream().map(User::getUid).collect(Collectors.toList()));\n");
+
+        assertTrue(processed.contains("Lists.partition(userList, (int)100).stream()"));
+        assertFalse(processed.contains("Lists.partition((List)userList"));
+    }
+
+    @Test
     void restoresRawListTypeFromLaterElementCast() {
         String processed = new SourcePostProcessor().process(
                 "List userList;\n"
@@ -517,6 +580,19 @@ class SourcePostProcessorTest {
         assertTrue(processed.contains("List<Map<String, Object>> list = "
                 + "this.accountService.listDuplicateReg();"));
         assertTrue(processed.contains("for (Map<String, Object> accountMap : list)"));
+    }
+
+    @Test
+    void restoresPageDataReturnListLocalType() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<SendSmsLogsDTO> queryPage() {\n"
+                        + "    List sendSmsLogsDTOS = SendSmsLogsMapstruct.INSTANCE.toList(apiPage.getRowList());\n"
+                        + "    sendSmsLogsDTOS.forEach(item -> item.setIdentify(null));\n"
+                        + "    return new PageData(sendSmsLogsDTOS, total);\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<SendSmsLogsDTO> sendSmsLogsDTOS = "
+                + "SendSmsLogsMapstruct.INSTANCE.toList(apiPage.getRowList());"));
     }
 
     @Test
