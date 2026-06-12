@@ -128,7 +128,7 @@ OTC_ADMIN_JAR=/path/to/otc-admin.jar \
 OTC_ADMIN_REFERENCE_PROJECT=/path/to/OTC-Admin \
 OTC_ADMIN_WORK_DIR=target/otc-admin-sample \
 OTC_ADMIN_TRACE_RUNTIME=1 \
-OTC_ADMIN_TRACE_ARGS='--spring.profiles.active=test --server.port=0' \
+OTC_ADMIN_TRACE_ARGS='--server.port=0' \
 OTC_ADMIN_TRACE_TIMEOUT=30 \
 ./scripts/regression/run-otc-admin-regression.sh
 ```

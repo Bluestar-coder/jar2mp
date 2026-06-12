@@ -14,7 +14,7 @@ JAR2MP_JAR="${JAR2MP_JAR:-${ROOT_DIR}/target/jar2mp-1.0-jar-with-dependencies.ja
 BUILD_JAR2MP="${BUILD_JAR2MP:-1}"
 OTC_ADMIN_TRACE_RUNTIME="${OTC_ADMIN_TRACE_RUNTIME:-0}"
 OTC_ADMIN_TRACE_ARGS="${OTC_ADMIN_TRACE_ARGS:-}"
-OTC_ADMIN_TRACE_TIMEOUT="${OTC_ADMIN_TRACE_TIMEOUT:-120}"
+OTC_ADMIN_TRACE_TIMEOUT="${OTC_ADMIN_TRACE_TIMEOUT:-30}"
 
 usage() {
   cat <<EOF
@@ -40,7 +40,7 @@ Environment:
       Runtime trace arguments passed as one --trace-args string when tracing is enabled.
       Example: --spring.profiles.active=test --server.port=0
   OTC_ADMIN_TRACE_TIMEOUT
-      Runtime trace timeout in seconds when tracing is enabled. Default: 120
+      Runtime trace timeout in seconds when tracing is enabled. Default: 30
   MVN
       Maven executable. Defaults to mvn, or IntelliJ IDEA's bundled Maven when mvn is not on PATH.
   JAVA_CMD

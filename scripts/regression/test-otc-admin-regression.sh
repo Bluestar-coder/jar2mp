@@ -51,6 +51,7 @@ assert_contains "${help_output}" "OTC_ADMIN_REFERENCE_PROJECT" "reference projec
 assert_contains "${help_output}" "OTC_ADMIN_TRACE_RUNTIME" "runtime trace env help"
 assert_contains "${help_output}" "OTC_ADMIN_TRACE_ARGS" "runtime trace args env help"
 assert_contains "${help_output}" "OTC_ADMIN_TRACE_TIMEOUT" "runtime trace timeout env help"
+assert_contains "${help_output}" "Runtime trace timeout in seconds when tracing is enabled. Default: 30" "runtime trace timeout default"
 assert_contains "${help_output}" "--restore-package-records" "package-record mode"
 assert_contains "${help_output}" "--byte-exact-package" "byte-exact mode"
 assert_contains "${help_output}" "otc-admin-summary.csv" "csv report"
