@@ -174,6 +174,45 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresServiceListTypeFromBatchUpdateUsage() {
+        String processed = new SourcePostProcessor().process(
+                "public void cryptAdvanceReviewHistorical(Integer limitCount) {\n"
+                        + "    LambdaQueryWrapper wrapper = (LambdaQueryWrapper)new LambdaQueryWrapper()"
+                        + ".last(\" limit 0,\" + limitCount);\n"
+                        + "    List<BaseReview> list = this.advanceReviewService.list((Wrapper)wrapper);\n"
+                        + "    count += this.advanceReviewService.batchUpdateCryptById(list).intValue();\n"
+                        + "    log.error(\"id:{}\", list.stream().map(BaseReview::getId)"
+                        + ".collect(Collectors.toList()));\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("LambdaQueryWrapper<AdvanceReview> wrapper = "
+                + "(LambdaQueryWrapper)new LambdaQueryWrapper<AdvanceReview>()"));
+        assertTrue(processed.contains("List<AdvanceReview> list = "
+                + "this.advanceReviewService.list((Wrapper)wrapper);"));
+        assertTrue(processed.contains("list.stream().map(AdvanceReview::getId)"));
+        assertFalse(processed.contains("List<BaseReview> list = this.advanceReviewService"));
+    }
+
+    @Test
+    void restoresServiceReturnedListTypeFromBatchUpdateUsage() {
+        String processed = new SourcePostProcessor().process(
+                "package com.otc.admin.task;\n\n"
+                        + "import com.otc.admin.domain.entity.BaseReview;\n"
+                        + "import com.otc.admin.service.SysUserService;\n\n"
+                        + "public void cryptTUserHistorical() {\n"
+                        + "    List list = this.sysUserService.getCryptTUserHistorical(LocalDateTime.now(), "
+                        + "\"nlocal\");\n"
+                        + "    list = list.stream().peek(u -> ClassReflectUtil.displaceFields(u, true, "
+                        + "CRYPT_ANNOTATIONS)).collect(Collectors.toList());\n"
+                        + "    rsCount = this.sysUserService.batchUpdateCryptById(list);\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("import com.otc.admin.domain.entity.SysUser;"));
+        assertTrue(processed.contains("List<SysUser> list = "
+                + "this.sysUserService.getCryptTUserHistorical(LocalDateTime.now(), \"nlocal\");"));
+    }
+
+    @Test
     void doesNotRedeclareExistingRawListFromWrapperAssignment() {
         String processed = new SourcePostProcessor().process(
                 "public void emailSuffixMatchesUser() {\n"

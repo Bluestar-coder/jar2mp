@@ -195,6 +195,7 @@ public class SourcePostProcessor {
         processed = addObjectElementTypesToRawListCasts(processed);
         processed = restoreLambdaQueryWrapperEntityTypes(processed);
         processed = restoreCfrImplicitLocalDeclarations(processed);
+        processed = restoreServiceBatchListEntityTypes(processed);
         processed = restoreLambdaUpdateWrapperEntityTypes(processed);
         processed = restoreLambdaQueryChainWrapperEntityTypes(processed);
         processed = restoreLambdaUpdateChainWrapperEntityTypes(processed);
@@ -619,6 +620,99 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private String restoreServiceBatchListEntityTypes(String source) {
+        String[] lines = source.split("\\n", -1);
+        Set<String> requiredImports = new LinkedHashSet<>();
+        Pattern serviceListAssignment = Pattern.compile("^(\\s*)List(?:\\s*<\\s*[A-Za-z_$][\\w$.]*\\s*>)?\\s+"
+                + "([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "((?:this\\.)?([A-Za-z_$][\\w$]*)\\.([A-Za-z_$][\\w$]*)\\s*\\([^;\\n]*;)");
+        Pattern wrapperArgument = Pattern.compile("\\b(?:list|page)\\s*\\(\\s*\\(Wrapper\\)\\s*"
+                + "([A-Za-z_$][\\w$]*)\\s*\\)");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = serviceListAssignment.matcher(lines[i]);
+            if (!matcher.find()) {
+                continue;
+            }
+            String listName = matcher.group(2);
+            String serviceName = matcher.group(4);
+            if (!isBatchUpdatedBySameService(lines, i + 1, serviceName, listName)) {
+                continue;
+            }
+            String entityType = entityTypeFromServiceField(serviceName);
+            if (entityType == null) {
+                continue;
+            }
+            String entityImport = siblingDomainEntityImport(source, entityType);
+            if (entityImport != null) {
+                requiredImports.add(entityImport);
+            }
+            lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                    matcher.group(1) + "List<" + entityType + "> " + listName + " = " + matcher.group(3)));
+
+            Matcher wrapperMatcher = wrapperArgument.matcher(lines[i]);
+            if (wrapperMatcher.find()) {
+                typeNearestPreviousLambdaQueryWrapperDeclaration(lines, i, wrapperMatcher.group(1), entityType);
+            }
+        }
+        String processed = String.join("\n", lines);
+        for (String requiredImport : requiredImports) {
+            processed = ensureImport(processed, requiredImport);
+        }
+        return processed;
+    }
+
+    private boolean isBatchUpdatedBySameService(String[] lines, int start, String serviceName, String listName) {
+        Pattern batchUpdate = Pattern.compile("\\b(?:this\\.)?" + Pattern.quote(serviceName)
+                + "\\.(?:batchUpdateCryptById|batchUpdateById|updateBatchById)\\s*\\(\\s*"
+                + Pattern.quote(listName) + "\\s*\\)");
+        for (int i = start; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                return false;
+            }
+            if (batchUpdate.matcher(lines[i]).find()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String entityTypeFromServiceField(String serviceName) {
+        if (!serviceName.endsWith("Service") || serviceName.length() <= "Service".length()) {
+            return null;
+        }
+        String stem = serviceName.substring(0, serviceName.length() - "Service".length());
+        if (stem.isEmpty()) {
+            return null;
+        }
+        if (stem.length() > 1 && stem.charAt(0) == 'i' && Character.isUpperCase(stem.charAt(1))) {
+            stem = stem.substring(1);
+        }
+        if (stem.isEmpty()) {
+            return null;
+        }
+        return Character.toUpperCase(stem.charAt(0)) + stem.substring(1);
+    }
+
+    private String siblingDomainEntityImport(String source, String entityType) {
+        if (simpleImports(source).containsKey(entityType)) {
+            return null;
+        }
+        Matcher matcher = IMPORT_DECLARATION.matcher(source);
+        String directEntityPackage = null;
+        while (matcher.find()) {
+            String imported = matcher.group(1);
+            int lastDot = imported.lastIndexOf('.');
+            if (lastDot < 0) {
+                continue;
+            }
+            String packageName = imported.substring(0, lastDot);
+            if (packageName.endsWith(".domain.entity")) {
+                directEntityPackage = packageName;
+            }
+        }
+        return directEntityPackage == null ? null : directEntityPackage + "." + entityType;
     }
 
     private String restorePageInfoRowListElementTypes(String source) {
