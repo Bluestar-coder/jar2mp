@@ -57,6 +57,7 @@ HIGH/MEDIUM method index from each decompile-parity-report.md. The LocalVariable
 to methods that need user parameter or local-variable names, excluding compiler-generated synthetic switch-map support
 classes, bridge methods, enum support methods, outer-this constructors, and monitor temporaries. The source coverage gates
 require zero class parse failures and zero missing-source methods in both modes.
+Pure StringConcatFactory string-concat invokedynamic calls are still counted as invokedynamic facts, but are not MEDIUM risks.
 EOF
 }
 
