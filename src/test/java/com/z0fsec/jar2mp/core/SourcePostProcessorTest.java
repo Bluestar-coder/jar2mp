@@ -20,6 +20,20 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesCollectionCastsFromCollectionUtilityCalls() {
+        String processed = new SourcePostProcessor().process(
+                "if (CollectionUtils.isEmpty((Collection)list)) return;\n"
+                        + "if (CollectionUtils.isNotEmpty((Collection)(rows = service.list()))) run();\n"
+                        + "if (CollUtil.isEmpty((java.util.Collection)ids)) return;\n"
+                        + "writer.write((Collection)rows, sheet);\n");
+
+        assertTrue(processed.contains("CollectionUtils.isEmpty(list)"));
+        assertTrue(processed.contains("CollectionUtils.isNotEmpty((rows = service.list()))"));
+        assertTrue(processed.contains("CollUtil.isEmpty(ids)"));
+        assertTrue(processed.contains("writer.write((Collection)rows, sheet);"));
+    }
+
+    @Test
     void restoresPrintableUnicodeEscapesInsideLiterals() {
         String processed = new SourcePostProcessor().process(
                 "log.info(\"" + "\\u8bf7" + "\\u6c42" + "\\u6765" + "\\u6e90" + "[{}]\");\n"

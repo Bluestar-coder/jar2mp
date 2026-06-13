@@ -173,6 +173,7 @@ public class SourcePostProcessor {
         processed = restoreCfrLambdaMetafactoryMethodReferences(processed);
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
+        processed = removeCollectionUtilityCasts(processed);
         processed = restoreCfrBrokenBreakMarkers(processed);
         processed = removeParameterArrayCasts(processed);
         processed = restoreStringLocalsFromToStringAssignments(processed);
@@ -2480,6 +2481,11 @@ public class SourcePostProcessor {
 
     private String removeGuavaPartitionListCasts(String source) {
         return source.replaceAll("Lists\\.partition\\(\\s*\\(List\\)\\s*", "Lists.partition(");
+    }
+
+    private String removeCollectionUtilityCasts(String source) {
+        return source.replaceAll("((?:CollectionUtils|CollUtil)\\.is(?:Empty|NotEmpty)\\(\\s*)"
+                + "\\((?:java\\.util\\.)?Collection(?:\\s*<\\s*\\?\\s*>)?\\)\\s*", "$1");
     }
 
     private String unwrapSFunctionArraySelects(String source) {
