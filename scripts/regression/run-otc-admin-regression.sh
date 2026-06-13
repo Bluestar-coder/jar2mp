@@ -1031,6 +1031,7 @@ write_source_diff_report() {
   if [[ ! -d "${generated_dir}" || ! -d "${reference_dir}" ]]; then
     set_var "SHARED_JAVA_FILES" "missing"
     set_var "SHARED_JAVA_CONTENT_DIFF_FILES" "missing"
+    set_var "SHARED_JAVA_RESOLVED_CONTENT_DIFF_FILES" "missing"
     set_var "SHARED_JAVA_FORMAT_ONLY_DIFF_FILES" "missing"
     set_var "SHARED_JAVA_IMPORT_ONLY_DIFF_FILES" "missing"
     set_var "SHARED_JAVA_DECOMPILER_ARTIFACT_DIFF_FILES" "missing"
@@ -1112,6 +1113,11 @@ write_source_diff_report() {
   set_var "SHARED_JAVA_DECOMPILER_ARTIFACT_DIFF_FILES" "$(count_file_lines "${decompiler_artifact_diff_list}")"
   set_var "SHARED_JAVA_BYTE_EQUIVALENT_TEXT_DIFF_FILES" "$(count_file_lines "${byte_equivalent_text_diff_list}")"
   set_var "SHARED_JAVA_SUBSTANTIVE_DIFF_FILES" "$(count_file_lines "${substantive_diff_list}")"
+  local resolved_content_diff_files=$((SHARED_JAVA_FORMAT_ONLY_DIFF_FILES
+    + SHARED_JAVA_IMPORT_ONLY_DIFF_FILES
+    + SHARED_JAVA_DECOMPILER_ARTIFACT_DIFF_FILES
+    + SHARED_JAVA_BYTE_EQUIVALENT_TEXT_DIFF_FILES))
+  set_var "SHARED_JAVA_RESOLVED_CONTENT_DIFF_FILES" "${resolved_content_diff_files}"
   set_var "REFERENCE_ONLY_JAVA_FILES" "$(count_file_lines "${reference_only}")"
   set_var "GENERATED_ONLY_JAVA_FILES" "$(count_file_lines "${generated_only}")"
   {
@@ -1120,6 +1126,7 @@ write_source_diff_report() {
     printf '%s\n' "- Reference source dir: \`${reference_dir}\`"
     printf '%s\n' "- Shared Java files: \`${SHARED_JAVA_FILES}\`"
     printf '%s\n' "- Shared Java files with content differences: \`${SHARED_JAVA_CONTENT_DIFF_FILES}\`"
+    printf '%s\n' "- Resolved shared Java content differences: \`${SHARED_JAVA_RESOLVED_CONTENT_DIFF_FILES}/${SHARED_JAVA_CONTENT_DIFF_FILES}\`"
     printf '%s\n' "- Format-only shared Java content differences: \`${SHARED_JAVA_FORMAT_ONLY_DIFF_FILES}\`"
     printf '%s\n' "- Import-only shared Java content differences: \`${SHARED_JAVA_IMPORT_ONLY_DIFF_FILES}\`"
     printf '%s\n' "- Decompiler-artifact shared Java content differences: \`${SHARED_JAVA_DECOMPILER_ARTIFACT_DIFF_FILES}\`"
@@ -1144,6 +1151,7 @@ write_source_diff_report() {
     printf '%s\n' "- Reference source dir: \`${reference_dir}\`"
     printf '%s\n' "- Shared Java files: \`${SHARED_JAVA_FILES}\`"
     printf '%s\n' "- Shared Java files with content differences: \`${SHARED_JAVA_CONTENT_DIFF_FILES}\`"
+    printf '%s\n' "- Resolved shared Java content differences: \`${SHARED_JAVA_RESOLVED_CONTENT_DIFF_FILES}/${SHARED_JAVA_CONTENT_DIFF_FILES}\`"
     printf '%s\n' "- Format-only shared Java content differences: \`${SHARED_JAVA_FORMAT_ONLY_DIFF_FILES}\`"
     printf '%s\n' "- Import-only shared Java content differences: \`${SHARED_JAVA_IMPORT_ONLY_DIFF_FILES}\`"
     printf '%s\n' "- Decompiler-artifact shared Java content differences: \`${SHARED_JAVA_DECOMPILER_ARTIFACT_DIFF_FILES}\`"
@@ -1336,7 +1344,7 @@ write_source_diff_report \
 write_source_rebuild_class_byte_report "${SOURCE_REBUILD_BYTECODE_REPORT}"
 
 {
-  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,shared_java_files,shared_java_content_diff_files,shared_java_format_only_diff_files,shared_java_import_only_diff_files,shared_java_decompiler_artifact_diff_files,shared_java_byte_equivalent_text_diff_files,shared_java_substantive_diff_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,source_content_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_overall_score,package_record_source_score,package_record_resource_score,package_record_runtime_score,package_record_runtime_launch_support,package_record_runtime_run_status,package_record_runtime_failure_message,package_record_runtime_failure_cause,package_record_runtime_events,package_record_verification_score,package_record_gap_count,package_record_gap_categories,package_record_observation_count,package_record_observation_categories,package_record_build_gate,package_record_source_coverage_gate,package_record_byte_package_gate,package_record_runtime_observation_gate,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_parity_risk_reasons,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_overall_score,byte_exact_source_score,byte_exact_resource_score,byte_exact_runtime_score,byte_exact_runtime_launch_support,byte_exact_runtime_run_status,byte_exact_runtime_failure_message,byte_exact_runtime_failure_cause,byte_exact_runtime_events,byte_exact_verification_score,byte_exact_gap_count,byte_exact_gap_categories,byte_exact_observation_count,byte_exact_observation_categories,byte_exact_build_gate,byte_exact_source_coverage_gate,byte_exact_byte_package_gate,byte_exact_runtime_observation_gate,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_parity_risk_reasons,byte_exact_project\n'
+  printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,shared_java_files,shared_java_content_diff_files,shared_java_resolved_content_diff_files,shared_java_format_only_diff_files,shared_java_import_only_diff_files,shared_java_decompiler_artifact_diff_files,shared_java_byte_equivalent_text_diff_files,shared_java_substantive_diff_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,source_content_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_overall_score,package_record_source_score,package_record_resource_score,package_record_runtime_score,package_record_runtime_launch_support,package_record_runtime_run_status,package_record_runtime_failure_message,package_record_runtime_failure_cause,package_record_runtime_events,package_record_verification_score,package_record_gap_count,package_record_gap_categories,package_record_observation_count,package_record_observation_categories,package_record_build_gate,package_record_source_coverage_gate,package_record_byte_package_gate,package_record_runtime_observation_gate,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_parity_risk_reasons,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_overall_score,byte_exact_source_score,byte_exact_resource_score,byte_exact_runtime_score,byte_exact_runtime_launch_support,byte_exact_runtime_run_status,byte_exact_runtime_failure_message,byte_exact_runtime_failure_cause,byte_exact_runtime_events,byte_exact_verification_score,byte_exact_gap_count,byte_exact_gap_categories,byte_exact_observation_count,byte_exact_observation_categories,byte_exact_build_gate,byte_exact_source_coverage_gate,byte_exact_byte_package_gate,byte_exact_runtime_observation_gate,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_parity_risk_reasons,byte_exact_project\n'
   csv_field "otc-admin"; printf ','
   csv_field "${OTC_ADMIN_JAR}"; printf ','
   csv_field "${JAR_SIZE_BYTES}"; printf ','
@@ -1346,6 +1354,7 @@ write_source_rebuild_class_byte_report "${SOURCE_REBUILD_BYTECODE_REPORT}"
   csv_field "${GENERATED_JAVA_FILES}"; printf ','
   csv_field "${SHARED_JAVA_FILES}"; printf ','
   csv_field "${SHARED_JAVA_CONTENT_DIFF_FILES}"; printf ','
+  csv_field "${SHARED_JAVA_RESOLVED_CONTENT_DIFF_FILES}"; printf ','
   csv_field "${SHARED_JAVA_FORMAT_ONLY_DIFF_FILES}"; printf ','
   csv_field "${SHARED_JAVA_IMPORT_ONLY_DIFF_FILES}"; printf ','
   csv_field "${SHARED_JAVA_DECOMPILER_ARTIFACT_DIFF_FILES}"; printf ','
@@ -1466,6 +1475,7 @@ write_source_rebuild_class_byte_report "${SOURCE_REBUILD_BYTECODE_REPORT}"
   printf '%s\n\n' "- Generated Java files: \`${GENERATED_JAVA_FILES}\`"
   printf '%s\n' "- Shared Java files: \`${SHARED_JAVA_FILES}\`"
   printf '%s\n' "- Shared Java files with content differences: \`${SHARED_JAVA_CONTENT_DIFF_FILES}\`"
+  printf '%s\n' "- Resolved shared Java content differences: \`${SHARED_JAVA_RESOLVED_CONTENT_DIFF_FILES}/${SHARED_JAVA_CONTENT_DIFF_FILES}\`"
   printf '%s\n' "- Format-only shared Java content differences: \`${SHARED_JAVA_FORMAT_ONLY_DIFF_FILES}\`"
   printf '%s\n' "- Import-only shared Java content differences: \`${SHARED_JAVA_IMPORT_ONLY_DIFF_FILES}\`"
   printf '%s\n' "- Decompiler-artifact shared Java content differences: \`${SHARED_JAVA_DECOMPILER_ARTIFACT_DIFF_FILES}\`"
