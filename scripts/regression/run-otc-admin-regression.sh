@@ -57,15 +57,17 @@ Reports:
   target/otc-admin-sample/report/otc-admin-summary.md
   target/otc-admin-sample/report/otc-admin-source-diff.txt
   target/otc-admin-sample/report/otc-admin-source-content-diff.txt
+  target/otc-admin-sample/report/otc-admin-source-rebuild-bytecode.md
   target/otc-admin-sample/report/package-record.cli.log
   target/otc-admin-sample/report/byte-exact.cli.log
 
 The source diff report lists reference-only Java files, generated-only Java files,
 shared Java content differences, format-only, import-only, decompiler-artifact, and substantive
 content-diff classification, and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
-The summary also includes restored package artifact fidelity details from
-each artifact-fidelity-summary.csv. These package-level class bytecode and ZIP
-metadata numbers are not a source-recompiled class-byte equivalence signal.
+The summary also includes source-recompiled class bytecode fidelity from
+target/classes, plus restored package artifact fidelity details from each
+artifact-fidelity-summary.csv. The package-level class bytecode and ZIP metadata
+numbers are not a source-recompiled class-byte equivalence signal.
 The summary also includes the decompile parity risk summary,
 HIGH/MEDIUM method index, risk reason breakdown from each decompile-parity-report.md,
 the restoration score bucket breakdown from each restoration-score.md, and
@@ -512,6 +514,177 @@ count_file_lines() {
     return
   fi
   wc -l < "${file}" | tr -d '[:space:]'
+}
+
+write_original_app_class_hashes() {
+  local original_jar="$1"
+  local entries_file="$2"
+  local output_file="$3"
+  : > "${output_file}"
+  if ! command -v unzip >/dev/null 2>&1 || [[ ! -f "${entries_file}" ]]; then
+    return 1
+  fi
+
+  local class_prefix=""
+  if grep -Eq '^BOOT-INF/classes/.*\.class$' "${entries_file}"; then
+    class_prefix="BOOT-INF/classes/"
+  elif grep -Eq '^WEB-INF/classes/.*\.class$' "${entries_file}"; then
+    class_prefix="WEB-INF/classes/"
+  fi
+
+  local entry rel sha
+  while IFS= read -r entry; do
+    [[ "${entry}" == *.class ]] || continue
+    if [[ -n "${class_prefix}" ]]; then
+      [[ "${entry}" == "${class_prefix}"* ]] || continue
+      rel="${entry#${class_prefix}}"
+    else
+      rel="${entry}"
+    fi
+    sha="$(unzip -p "${original_jar}" "${entry}" | shasum -a 256 | awk '{ print $1 }')"
+    printf '%s\t%s\n' "${rel}" "${sha}" >> "${output_file}"
+  done < "${entries_file}"
+  sort -o "${output_file}" "${output_file}"
+}
+
+write_rebuilt_class_hashes() {
+  local project_dir="$1"
+  local output_file="$2"
+  : > "${output_file}"
+  local classes_dir="${project_dir}/target/classes"
+  if [[ ! -d "${classes_dir}" ]]; then
+    return 1
+  fi
+  find "${classes_dir}" -type f -name '*.class' | sort | while IFS= read -r class_file; do
+    local rel sha
+    rel="${class_file#${classes_dir}/}"
+    sha="$(shasum -a 256 "${class_file}" | awk '{ print $1 }')"
+    printf '%s\t%s\n' "${rel}" "${sha}"
+  done > "${output_file}"
+}
+
+collect_source_rebuild_class_byte_metrics() {
+  local prefix="$1"
+  local project_dir="$2"
+  local work_prefix="${REPORT_DIR}/.${prefix}-source-rebuild"
+  local original_hashes="${work_prefix}.original.tsv"
+  local rebuilt_hashes="${work_prefix}.rebuilt.tsv"
+  local different_samples="${work_prefix}.different.tsv"
+  local missing_samples="${work_prefix}.missing.tsv"
+  local extra_samples="${work_prefix}.extra.tsv"
+
+  : > "${different_samples}"
+  : > "${missing_samples}"
+  : > "${extra_samples}"
+  write_original_app_class_hashes "${OTC_ADMIN_JAR}" "${ORIGINAL_JAR_ENTRIES}" "${original_hashes}" || true
+  write_rebuilt_class_hashes "${project_dir}" "${rebuilt_hashes}" || true
+
+  local summary
+  summary="$(
+    awk -F '\t' \
+      -v different_samples="${different_samples}" \
+      -v missing_samples="${missing_samples}" \
+      -v extra_samples="${extra_samples}" '
+      NR == FNR {
+        original[$1] = $2
+        original_total++
+        next
+      }
+      {
+        rebuilt[$1] = $2
+        rebuilt_total++
+      }
+      END {
+        for (class_path in original) {
+          if (class_path in rebuilt) {
+            common++
+            if (original[class_path] == rebuilt[class_path]) {
+              same++
+            } else {
+              different++
+              if (different <= 20) {
+                printf "%s\t%s\t%s\n", class_path, original[class_path], rebuilt[class_path] >> different_samples
+              }
+            }
+          } else {
+            missing++
+            if (missing <= 20) {
+              print class_path >> missing_samples
+            }
+          }
+        }
+        for (class_path in rebuilt) {
+          if (!(class_path in original)) {
+            extra++
+            if (extra <= 20) {
+              print class_path >> extra_samples
+            }
+          }
+        }
+        printf "%d,%d,%d,%d,%d,%d,%d\n", original_total, rebuilt_total, common, same, different, missing, extra
+      }
+    ' "${original_hashes}" "${rebuilt_hashes}"
+  )"
+
+  local original_total rebuilt_total common same different missing extra
+  IFS=',' read -r original_total rebuilt_total common same different missing extra <<< "${summary}"
+  set_var "${prefix}_source_rebuild_original_classes" "${original_total}"
+  set_var "${prefix}_source_rebuild_classes" "${rebuilt_total}"
+  set_var "${prefix}_source_rebuild_common_classes" "${common}"
+  set_var "${prefix}_source_rebuild_same_class_bytes" "${same}"
+  set_var "${prefix}_source_rebuild_different_class_bytes" "${different}"
+  set_var "${prefix}_source_rebuild_missing_classes" "${missing}"
+  set_var "${prefix}_source_rebuild_extra_classes" "${extra}"
+  set_var "${prefix}_source_rebuild_different_samples" "${different_samples}"
+  set_var "${prefix}_source_rebuild_missing_samples" "${missing_samples}"
+  set_var "${prefix}_source_rebuild_extra_samples" "${extra_samples}"
+}
+
+append_source_rebuild_samples() {
+  local title="$1"
+  local file="$2"
+  local mode="$3"
+  printf '### %s (%s)\n\n' "${title}" "${mode}"
+  if [[ ! -s "${file}" ]]; then
+    printf -- '- None\n\n'
+    return
+  fi
+  head -20 "${file}" | while IFS= read -r line; do
+    printf -- '- `%s`\n' "${line}"
+  done
+  printf '\n'
+}
+
+write_source_rebuild_class_byte_report() {
+  local report="$1"
+  {
+    printf '# OTC Admin Source Rebuild Class Bytecode Fidelity\n\n'
+    printf 'This report compares application `.class` files compiled into `target/classes` from generated sources with application class entries from the original JAR. It is separate from restored package artifact fidelity.\n\n'
+    printf '| Mode | Original app classes | Recompiled classes | Common | Same class bytes | Different class bytes | Missing recompiled classes | Extra recompiled classes |\n'
+    printf '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n'
+    printf '| package-record | %s | %s | %s | %s | %s | %s | %s |\n' \
+      "${package_record_source_rebuild_original_classes}" \
+      "${package_record_source_rebuild_classes}" \
+      "${package_record_source_rebuild_common_classes}" \
+      "${package_record_source_rebuild_same_class_bytes}" \
+      "${package_record_source_rebuild_different_class_bytes}" \
+      "${package_record_source_rebuild_missing_classes}" \
+      "${package_record_source_rebuild_extra_classes}"
+    printf '| byte-exact | %s | %s | %s | %s | %s | %s | %s |\n\n' \
+      "${byte_exact_source_rebuild_original_classes}" \
+      "${byte_exact_source_rebuild_classes}" \
+      "${byte_exact_source_rebuild_common_classes}" \
+      "${byte_exact_source_rebuild_same_class_bytes}" \
+      "${byte_exact_source_rebuild_different_class_bytes}" \
+      "${byte_exact_source_rebuild_missing_classes}" \
+      "${byte_exact_source_rebuild_extra_classes}"
+    append_source_rebuild_samples "Different class byte examples" "${package_record_source_rebuild_different_samples}" "package-record"
+    append_source_rebuild_samples "Missing recompiled class examples" "${package_record_source_rebuild_missing_samples}" "package-record"
+    append_source_rebuild_samples "Extra recompiled class examples" "${package_record_source_rebuild_extra_samples}" "package-record"
+    append_source_rebuild_samples "Different class byte examples" "${byte_exact_source_rebuild_different_samples}" "byte-exact"
+    append_source_rebuild_samples "Missing recompiled class examples" "${byte_exact_source_rebuild_missing_samples}" "byte-exact"
+    append_source_rebuild_samples "Extra recompiled class examples" "${byte_exact_source_rebuild_extra_samples}" "byte-exact"
+  } > "${report}"
 }
 
 count_present_classes() {
@@ -1029,12 +1202,16 @@ CSV_REPORT="${REPORT_DIR}/otc-admin-summary.csv"
 MD_REPORT="${REPORT_DIR}/otc-admin-summary.md"
 SOURCE_DIFF_REPORT="${REPORT_DIR}/otc-admin-source-diff.txt"
 SOURCE_CONTENT_DIFF_REPORT="${REPORT_DIR}/otc-admin-source-content-diff.txt"
+SOURCE_REBUILD_BYTECODE_REPORT="${REPORT_DIR}/otc-admin-source-rebuild-bytecode.md"
 write_source_diff_report \
   "${package_record_project_dir}/src/main/java" \
   "${OTC_ADMIN_REFERENCE_PROJECT}/src/main/java" \
   "${SOURCE_DIFF_REPORT}" \
   "${ORIGINAL_JAR_ENTRIES}" \
   "${SOURCE_CONTENT_DIFF_REPORT}"
+collect_source_rebuild_class_byte_metrics "package_record" "${package_record_project_dir}"
+collect_source_rebuild_class_byte_metrics "byte_exact" "${byte_exact_project_dir}"
+write_source_rebuild_class_byte_report "${SOURCE_REBUILD_BYTECODE_REPORT}"
 
 {
   printf 'sample,jar,jar_size_bytes,original_sha256,reference_project,reference_java_files,generated_java_files,shared_java_files,shared_java_content_diff_files,shared_java_format_only_diff_files,shared_java_import_only_diff_files,shared_java_decompiler_artifact_diff_files,shared_java_substantive_diff_files,reference_only_java_files,generated_only_java_files,reference_only_original_class_present,reference_only_original_class_absent,generated_only_original_class_present,generated_only_original_class_absent,source_diff_report,source_content_diff_report,package_record_exit_code,package_record_verification_summary,package_record_failure_type,package_record_error_count,package_record_compile_fallback_classes,package_record_decompile_failures,package_record_overall_score,package_record_source_score,package_record_resource_score,package_record_runtime_score,package_record_runtime_launch_support,package_record_runtime_run_status,package_record_runtime_failure_message,package_record_runtime_failure_cause,package_record_runtime_events,package_record_verification_score,package_record_gap_count,package_record_gap_categories,package_record_build_gate,package_record_source_coverage_gate,package_record_byte_package_gate,package_record_runtime_observation_gate,package_record_exact,package_record_content_entries_match,package_record_same_class_bytes,package_record_different_class_bytes,package_record_same_nested_libs,package_record_different_nested_libs,package_record_archive_entry_order_same,package_record_archive_metadata_diff_entries,package_record_archive_bytes_same,package_record_original_sha256,package_record_rebuilt_sha256,package_record_artifact_sha256,package_record_parity_classes_scanned,package_record_parity_methods_scanned,package_record_parity_parse_failures,package_record_parity_missing_source_methods,package_record_parity_reflection_methods,package_record_parity_invokedynamic_methods,package_record_parity_missing_lvt_methods,package_record_parity_high_methods,package_record_parity_medium_methods,package_record_parity_low_methods,package_record_parity_risk_reasons,package_record_project,byte_exact_exit_code,byte_exact_verification_summary,byte_exact_failure_type,byte_exact_error_count,byte_exact_compile_fallback_classes,byte_exact_decompile_failures,byte_exact_overall_score,byte_exact_source_score,byte_exact_resource_score,byte_exact_runtime_score,byte_exact_runtime_launch_support,byte_exact_runtime_run_status,byte_exact_runtime_failure_message,byte_exact_runtime_failure_cause,byte_exact_runtime_events,byte_exact_verification_score,byte_exact_gap_count,byte_exact_gap_categories,byte_exact_build_gate,byte_exact_source_coverage_gate,byte_exact_byte_package_gate,byte_exact_runtime_observation_gate,byte_exact_exact,byte_exact_content_entries_match,byte_exact_same_class_bytes,byte_exact_different_class_bytes,byte_exact_same_nested_libs,byte_exact_different_nested_libs,byte_exact_archive_entry_order_same,byte_exact_archive_metadata_diff_entries,byte_exact_archive_bytes_same,byte_exact_original_sha256,byte_exact_rebuilt_sha256,byte_exact_artifact_sha256,byte_exact_parity_classes_scanned,byte_exact_parity_methods_scanned,byte_exact_parity_parse_failures,byte_exact_parity_missing_source_methods,byte_exact_parity_reflection_methods,byte_exact_parity_invokedynamic_methods,byte_exact_parity_missing_lvt_methods,byte_exact_parity_high_methods,byte_exact_parity_medium_methods,byte_exact_parity_low_methods,byte_exact_parity_risk_reasons,byte_exact_project\n'
@@ -1195,6 +1372,26 @@ write_source_diff_report \
     "${byte_exact_overall_score}" "${byte_exact_source_score}" \
     "${byte_exact_resource_score}" "${byte_exact_runtime_score}" \
     "${byte_exact_verification_score}"
+  printf '## Source rebuild class bytecode fidelity\n\n'
+  printf 'These numbers compare `target/classes` compiled from generated sources with application class entries from the original JAR. They are stricter than restored package artifact fidelity.\n\n'
+  printf '| Mode | Original app classes | Recompiled classes | Common | Same class bytes | Different class bytes | Missing recompiled classes | Extra recompiled classes |\n'
+  printf '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n'
+  printf '| package-record | %s | %s | %s | %s | %s | %s | %s |\n' \
+    "${package_record_source_rebuild_original_classes}" \
+    "${package_record_source_rebuild_classes}" \
+    "${package_record_source_rebuild_common_classes}" \
+    "${package_record_source_rebuild_same_class_bytes}" \
+    "${package_record_source_rebuild_different_class_bytes}" \
+    "${package_record_source_rebuild_missing_classes}" \
+    "${package_record_source_rebuild_extra_classes}"
+  printf '| byte-exact | %s | %s | %s | %s | %s | %s | %s |\n\n' \
+    "${byte_exact_source_rebuild_original_classes}" \
+    "${byte_exact_source_rebuild_classes}" \
+    "${byte_exact_source_rebuild_common_classes}" \
+    "${byte_exact_source_rebuild_same_class_bytes}" \
+    "${byte_exact_source_rebuild_different_class_bytes}" \
+    "${byte_exact_source_rebuild_missing_classes}" \
+    "${byte_exact_source_rebuild_extra_classes}"
   printf '## Remaining gaps\n\n'
   printf '| Mode | Gap count | Categories |\n'
   printf '| --- | ---: | --- |\n'
@@ -1263,6 +1460,7 @@ write_source_diff_report \
   printf '%s\n' "- byte-exact artifact: \`${byte_exact_artifact_path}\`"
   printf '%s\n' "- Source diff: \`${SOURCE_DIFF_REPORT}\`"
   printf '%s\n' "- Source content diff: \`${SOURCE_CONTENT_DIFF_REPORT}\`"
+  printf '%s\n' "- Source rebuild bytecode fidelity: \`${SOURCE_REBUILD_BYTECODE_REPORT}\`"
   printf '%s\n' "- CSV: \`${CSV_REPORT}\`"
 } > "${MD_REPORT}"
 
