@@ -1877,6 +1877,7 @@ class SourcePostProcessorTest {
         assertTrue(processed.contains("case AUTO_RENEW_SUCCESS -> \"renew\";"));
         assertFalse(processed.contains("1.$SwitchMap"));
         assertFalse(processed.contains("case 1 ->"));
+        assertFalse(processed.contains("MatchException"), processed);
     }
 
     @Test

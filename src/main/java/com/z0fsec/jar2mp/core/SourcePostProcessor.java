@@ -60,6 +60,8 @@ public class SourcePostProcessor {
             "switch\\s*\\(\\s*1\\.(\\$SwitchMap\\$[A-Za-z0-9_$]+)\\[([\\s\\S]+?)\\.ordinal\\(\\)\\]\\s*\\)");
     private static final Pattern SYNTHETIC_ENUM_SWITCH_CASE = Pattern.compile(
             "(\\bcase\\s+)(\\d+)(\\s*(?::|->))");
+    private static final Pattern SYNTHETIC_ENUM_SWITCH_MATCH_EXCEPTION_DEFAULT = Pattern.compile(
+            "(?m)^\\s*default\\s*->\\s*throw\\s+new\\s+(?:java\\.lang\\.)?MatchException\\s*\\(\\s*null\\s*,\\s*null\\s*\\)\\s*;\\R?");
     private static final Pattern SWITCH_OPENING_BRACE_WITHOUT_SPACE = Pattern.compile(
             "(?m)^(\\s*(?:return\\s+)?switch\\s*\\([^\\n{]*\\))\\{");
     private static final Pattern METHOD_REFERENCE_TYPE = Pattern.compile(
@@ -3967,7 +3969,7 @@ public class SourcePostProcessor {
             }
         }
         matcher.appendTail(buffer);
-        return buffer.toString();
+        return SYNTHETIC_ENUM_SWITCH_MATCH_EXCEPTION_DEFAULT.matcher(buffer.toString()).replaceAll("");
     }
 
     private int findNextChar(String source, char target, int startOffset) {
