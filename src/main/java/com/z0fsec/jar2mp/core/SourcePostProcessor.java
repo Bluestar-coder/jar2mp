@@ -169,6 +169,7 @@ public class SourcePostProcessor {
 
         String processed = stripDecompilerHeader(source);
         processed = removeDecompilerDiagnosticComments(processed);
+        processed = restorePrintableUnicodeEscapes(processed);
         processed = restoreCfrLambdaMetafactoryMethodReferences(processed);
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
@@ -296,6 +297,127 @@ public class SourcePostProcessor {
             return source;
         }
         return source.substring(matcher.end());
+    }
+
+    private String restorePrintableUnicodeEscapes(String source) {
+        StringBuilder restored = new StringBuilder(source.length());
+        boolean inString = false;
+        boolean inChar = false;
+        boolean inLineComment = false;
+        boolean inBlockComment = false;
+        boolean escaped = false;
+        int index = 0;
+        while (index < source.length()) {
+            char current = source.charAt(index);
+            char next = index + 1 < source.length() ? source.charAt(index + 1) : '\0';
+
+            if (inLineComment) {
+                restored.append(current);
+                if (current == '\n') {
+                    inLineComment = false;
+                }
+                index++;
+                continue;
+            }
+            if (inBlockComment) {
+                restored.append(current);
+                if (current == '*' && next == '/') {
+                    restored.append(next);
+                    inBlockComment = false;
+                    index += 2;
+                } else {
+                    index++;
+                }
+                continue;
+            }
+            if (!inString && !inChar) {
+                if (current == '/' && next == '/') {
+                    restored.append(current).append(next);
+                    inLineComment = true;
+                    index += 2;
+                    continue;
+                }
+                if (current == '/' && next == '*') {
+                    restored.append(current).append(next);
+                    inBlockComment = true;
+                    index += 2;
+                    continue;
+                }
+                if (current == '"') {
+                    inString = true;
+                } else if (current == '\'') {
+                    inChar = true;
+                }
+                restored.append(current);
+                index++;
+                continue;
+            }
+
+            if (current == '\\') {
+                UnicodeEscape escape = escaped ? null : unicodeEscapeAt(source, index);
+                if (escape != null && isPrintableNonAscii(escape.codePoint)) {
+                    restored.appendCodePoint(escape.codePoint);
+                    escaped = false;
+                    index = escape.endIndex;
+                    continue;
+                }
+                restored.append(current);
+                escaped = !escaped;
+                index++;
+                continue;
+            }
+
+            restored.append(current);
+            if (!escaped && ((inString && current == '"') || (inChar && current == '\''))) {
+                inString = false;
+                inChar = false;
+            }
+            escaped = false;
+            index++;
+        }
+        return restored.toString();
+    }
+
+    private UnicodeEscape unicodeEscapeAt(String source, int slashIndex) {
+        int index = slashIndex + 1;
+        if (index >= source.length() || source.charAt(index) != 'u') {
+            return null;
+        }
+        while (index < source.length() && source.charAt(index) == 'u') {
+            index++;
+        }
+        if (index + 4 > source.length()) {
+            return null;
+        }
+        int codePoint = 0;
+        for (int i = 0; i < 4; i++) {
+            int digit = Character.digit(source.charAt(index + i), 16);
+            if (digit < 0) {
+                return null;
+            }
+            codePoint = (codePoint << 4) + digit;
+        }
+        return new UnicodeEscape(codePoint, index + 4);
+    }
+
+    private boolean isPrintableNonAscii(int codePoint) {
+        if (codePoint <= 0x7E || codePoint == 0x7F || !Character.isValidCodePoint(codePoint)) {
+            return false;
+        }
+        return !Character.isISOControl(codePoint)
+                && codePoint != 0x2028
+                && codePoint != 0x2029
+                && (codePoint < Character.MIN_SURROGATE || codePoint > Character.MAX_SURROGATE);
+    }
+
+    private static class UnicodeEscape {
+        private final int codePoint;
+        private final int endIndex;
+
+        private UnicodeEscape(int codePoint, int endIndex) {
+            this.codePoint = codePoint;
+            this.endIndex = endIndex;
+        }
     }
 
     private String removeRepeatedValidationAnnotations(String source) {

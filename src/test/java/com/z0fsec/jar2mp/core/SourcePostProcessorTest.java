@@ -20,6 +20,17 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresPrintableUnicodeEscapesInsideLiterals() {
+        String processed = new SourcePostProcessor().process(
+                "log.info(\"" + "\\u8bf7" + "\\u6c42" + "\\u6765" + "\\u6e90" + "[{}]\");\n"
+                        + "String marker = \"" + "\\u0001" + "\";\n");
+
+        assertTrue(processed.contains("\"" + "\u8bf7\u6c42\u6765\u6e90" + "[{}]\""));
+        assertTrue(processed.contains("\"" + "\\u0001" + "\""));
+        assertFalse(processed.contains("\\u8bf7"));
+    }
+
+    @Test
     void stripsDecompilerHeader() {
         String processed = new SourcePostProcessor().process(
                 "/*\n"
