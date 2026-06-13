@@ -84,10 +84,13 @@ class SourcePostProcessorTest {
         localTypes.put("disableFailUserIdList", "java.util.List<java.lang.Long>");
         localTypes.put("uidLabelSet", "java.util.Set<java.lang.Long>");
         localTypes.put("balanceExcels", "java.util.ArrayList<com.otc.admin.domain.dto.user.LabelCoinBalanceExcel>");
+        localTypes.put("pageInfo",
+                "com.ochat.framework.common.pojo.vo.PageInfo<com.ochat.activity.pojo.resp.ActivityPageForWebResp>");
 
         String processed = new SourcePostProcessor().process(
                 "package com.otc.admin.biz;\n\n"
                         + "import com.otc.admin.domain.dto.user.LabelCoinBalanceExcel;\n"
+                        + "import com.ochat.framework.common.pojo.vo.PageInfo;\n"
                         + "import java.util.ArrayList;\n"
                         + "import java.util.List;\n"
                         + "import java.util.Set;\n\n"
@@ -96,6 +99,7 @@ class SourcePostProcessorTest {
                         + "        ArrayList disableFailUserIdList = Lists.newArrayList();\n"
                         + "        Set uidLabelSet = this.detailService.queryByLabelName(labelName);\n"
                         + "        ArrayList balanceExcels = new ArrayList();\n"
+                        + "        PageInfo pageInfo = this.activityApi.pageActivity(req);\n"
                         + "    }\n"
                         + "}\n",
                 null,
@@ -107,6 +111,33 @@ class SourcePostProcessorTest {
         assertTrue(processed.contains("Set<Long> uidLabelSet = this.detailService.queryByLabelName(labelName);"));
         assertTrue(processed.contains(
                 "ArrayList<LabelCoinBalanceExcel> balanceExcels = new ArrayList<>();"));
+        assertTrue(processed.contains("import com.ochat.activity.pojo.resp.ActivityPageForWebResp;"));
+        assertTrue(processed.contains(
+                "PageInfo<ActivityPageForWebResp> pageInfo = this.activityApi.pageActivity(req);"));
+    }
+
+    @Test
+    void avoidsImportsForConflictingBytecodeLocalGenericSimpleNames() {
+        Map<String, String> localTypes = new java.util.LinkedHashMap<>();
+        localTypes.put("switches", "java.util.List<otc.admin.share.dto.newpayment.UserSubSwitchDTO>");
+
+        String processed = new SourcePostProcessor().process(
+                "package com.otc.admin.mapstruct;\n\n"
+                        + "import com.ochat.global.config.pojo.resp.UserSubSwitchDTO;\n"
+                        + "import java.util.List;\n\n"
+                        + "class Sample {\n"
+                        + "    public void run() {\n"
+                        + "        List switches = this.load();\n"
+                        + "    }\n"
+                        + "}\n",
+                null,
+                java.util.Collections.emptyMap(),
+                java.util.Collections.emptyMap(),
+                localTypes);
+
+        assertFalse(processed.contains("import otc.admin.share.dto.newpayment.UserSubSwitchDTO;"));
+        assertTrue(processed.contains(
+                "List<otc.admin.share.dto.newpayment.UserSubSwitchDTO> switches = this.load();"));
     }
 
     @Test

@@ -877,9 +877,10 @@ public class SourcePostProcessor {
         if (localGenericTypes == null || localGenericTypes.isEmpty()) {
             return source;
         }
-        String[] lines = source.split("\\n", -1);
-        Map<String, String> imports = simpleImports(source);
-        String packageName = findPackageName(source, null);
+        String processed = ensureImportsForLocalGenericTypes(source, localGenericTypes);
+        String[] lines = processed.split("\\n", -1);
+        Map<String, String> imports = simpleImports(processed);
+        String packageName = findPackageName(processed, null);
         boolean changed = false;
         for (int i = 0; i < lines.length; i++) {
             for (Map.Entry<String, String> entry : localGenericTypes.entrySet()) {
@@ -893,7 +894,66 @@ public class SourcePostProcessor {
                 }
             }
         }
-        return changed ? String.join("\n", lines) : source;
+        return changed ? String.join("\n", lines) : processed;
+    }
+
+    private String ensureImportsForLocalGenericTypes(String source, Map<String, String> localGenericTypes) {
+        String processed = source;
+        String packageName = findPackageName(source, null);
+        Map<String, Set<String>> classNamesBySimpleName = referencedClassNamesBySimpleName(source, localGenericTypes);
+        for (String javaType : localGenericTypes.values()) {
+            for (String typeName : referencedClassNames(javaType)) {
+                if (typeName.startsWith("java.lang.")) {
+                    continue;
+                }
+                int lastDot = typeName.lastIndexOf('.');
+                if (lastDot < 0) {
+                    continue;
+                }
+                if (!packageName.isEmpty() && typeName.substring(0, lastDot).equals(packageName)) {
+                    continue;
+                }
+                if (hasSimpleNameConflict(typeName, classNamesBySimpleName)) {
+                    continue;
+                }
+                processed = ensureImport(processed, typeName);
+            }
+        }
+        return processed;
+    }
+
+    private Map<String, Set<String>> referencedClassNamesBySimpleName(String source,
+                                                                      Map<String, String> localGenericTypes) {
+        Map<String, Set<String>> namesBySimpleName = new LinkedHashMap<>();
+        for (String importedType : simpleImports(source).values()) {
+            namesBySimpleName.computeIfAbsent(simpleTypeName(importedType), ignored -> new LinkedHashSet<>())
+                    .add(importedType);
+        }
+        for (String javaType : localGenericTypes.values()) {
+            for (String typeName : referencedClassNames(javaType)) {
+                namesBySimpleName.computeIfAbsent(simpleTypeName(typeName), ignored -> new LinkedHashSet<>())
+                        .add(typeName);
+            }
+        }
+        return namesBySimpleName;
+    }
+
+    private boolean hasSimpleNameConflict(String typeName, Map<String, Set<String>> classNamesBySimpleName) {
+        Set<String> names = classNamesBySimpleName.get(simpleTypeName(typeName));
+        return names != null && (names.size() > 1 || !names.contains(typeName));
+    }
+
+    private Set<String> referencedClassNames(String javaType) {
+        Set<String> types = new LinkedHashSet<>();
+        if (javaType == null || javaType.isEmpty()) {
+            return types;
+        }
+        Matcher matcher = Pattern.compile("\\b(?:[a-z_$][\\w$]*\\.)+[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*")
+                .matcher(javaType);
+        while (matcher.find()) {
+            types.add(matcher.group());
+        }
+        return types;
     }
 
     private String restoreLocalGenericTypeDeclaration(String line, String variableName, String targetType) {
@@ -901,7 +961,7 @@ public class SourcePostProcessor {
             return line;
         }
         Pattern declaration = Pattern.compile("^(\\s*)((?:final\\s+)?)"
-                + "((?:java\\.util\\.)?(?:List|ArrayList|Set|HashSet|Map|HashMap))\\s+"
+                + "([A-Za-z_$][\\w$.]*)\\s+"
                 + Pattern.quote(variableName) + "\\s*=\\s*([^;\\n{}]+);(\\s*)$");
         Matcher matcher = declaration.matcher(line);
         if (!matcher.find()) {
@@ -909,7 +969,7 @@ public class SourcePostProcessor {
         }
         String currentRawType = rawSimpleTypeName(matcher.group(3));
         String targetRawType = rawSimpleTypeName(targetType);
-        if (!canRewriteRawCollectionType(currentRawType, targetRawType)) {
+        if (!canRewriteRawGenericType(currentRawType, targetRawType)) {
             return line;
         }
         String initializer = restoreRawCollectionInitializerDiamond(matcher.group(4), currentRawType);
@@ -917,7 +977,7 @@ public class SourcePostProcessor {
                 + initializer + ";" + matcher.group(5);
     }
 
-    private boolean canRewriteRawCollectionType(String currentRawType, String targetRawType) {
+    private boolean canRewriteRawGenericType(String currentRawType, String targetRawType) {
         if (currentRawType.equals(targetRawType)) {
             return true;
         }
