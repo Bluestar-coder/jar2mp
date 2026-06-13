@@ -287,10 +287,214 @@ public class SourcePostProcessor {
         processed = restoreRawHashMapTypesFromTypedMethodArguments(processed);
         processed = restoreRawHashMapTypesFromPutValues(processed);
         processed = restoreDiamondConstructorsForTypedCollectionAssignments(processed);
+        processed = removeRedundantKnownVariableCasts(processed);
+        processed = wrapRocketMqBatchSyncSendTypedLists(processed);
         processed = restoreCheckedExceptionHandlers(processed);
         processed = restoreSwitchBraceSpacing(processed);
         processed = restoreUnindentedMemberMethodDeclarations(processed);
         return processed;
+    }
+
+    private String wrapRocketMqBatchSyncSendTypedLists(String source) {
+        if (!source.contains("batchSyncSend(")) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> localTypes = new LinkedHashMap<>();
+        int methodDepth = 0;
+        boolean changed = false;
+        Pattern typedLocal = Pattern.compile("^\\s*(?:final\\s+)?([A-Za-z_$][\\w$.]*"
+                + "(?:\\s*<[^;=]+>)?(?:\\s*\\[\\])?)\\s+([A-Za-z_$][\\w$]*)\\s*(?:=|;)");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (looksLikeMethodDeclaration(line)) {
+                localTypes.clear();
+                localTypes.putAll(methodParameterTypes(line));
+                methodDepth = Math.max(1, braceDelta(line));
+                continue;
+            }
+            if (methodDepth <= 0) {
+                continue;
+            }
+            String wrapped = wrapRocketMqBatchSyncSendTypedListsFromLine(line, localTypes);
+            if (!wrapped.equals(line)) {
+                lines[i] = wrapped;
+                changed = true;
+            }
+            Matcher localMatcher = typedLocal.matcher(lines[i]);
+            if (localMatcher.find()) {
+                localTypes.put(localMatcher.group(2), normalizeGenericType(localMatcher.group(1)));
+            }
+            methodDepth += braceDelta(line);
+            if (methodDepth <= 0) {
+                localTypes.clear();
+            }
+        }
+        String processed = String.join("\n", lines);
+        return changed ? ensureImport(processed, "java.util.ArrayList") : processed;
+    }
+
+    private String wrapRocketMqBatchSyncSendTypedListsFromLine(String line, Map<String, String> localTypes) {
+        StringBuilder builder = new StringBuilder(line.length() + 32);
+        int searchIndex = 0;
+        while (true) {
+            int methodIndex = line.indexOf("batchSyncSend(", searchIndex);
+            if (methodIndex < 0) {
+                builder.append(line, searchIndex, line.length());
+                return builder.toString();
+            }
+            int openParen = line.indexOf('(', methodIndex);
+            int closeParen = findMatchingParen(line, openParen);
+            if (closeParen < 0) {
+                builder.append(line, searchIndex, methodIndex + 1);
+                searchIndex = methodIndex + 1;
+                continue;
+            }
+            String arguments = line.substring(openParen + 1, closeParen);
+            List<String> splitArguments = splitTopLevelArguments(arguments);
+            if (splitArguments.size() >= 2
+                    && needsBatchSyncSendListBridge(splitArguments.get(1), localTypes)) {
+                splitArguments.set(1, "new ArrayList<Object>(" + splitArguments.get(1).trim() + ")");
+                builder.append(line, searchIndex, openParen + 1)
+                        .append(String.join(", ", splitArguments))
+                        .append(')');
+            } else {
+                builder.append(line, searchIndex, closeParen + 1);
+            }
+            searchIndex = closeParen + 1;
+        }
+    }
+
+    private boolean needsBatchSyncSendListBridge(String argument, Map<String, String> localTypes) {
+        String variableName = argument == null ? "" : argument.trim();
+        if (!isSimpleIdentifier(variableName)) {
+            return false;
+        }
+        String type = localTypes.get(variableName);
+        if (type == null || !"List".equals(rawSimpleTypeName(type))) {
+            return false;
+        }
+        String elementType = firstGenericArgument(type);
+        return elementType != null
+                && !elementType.isEmpty()
+                && !"?".equals(elementType)
+                && !"Object".equals(rawSimpleTypeName(elementType));
+    }
+
+    private boolean isSimpleIdentifier(String value) {
+        if (value == null || value.isEmpty() || !Character.isJavaIdentifierStart(value.charAt(0))) {
+            return false;
+        }
+        for (int i = 1; i < value.length(); i++) {
+            if (!Character.isJavaIdentifierPart(value.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String firstGenericArgument(String type) {
+        int start = type.indexOf('<');
+        int end = type.lastIndexOf('>');
+        if (start < 0 || end <= start) {
+            return null;
+        }
+        List<String> arguments = splitTopLevelArguments(type.substring(start + 1, end));
+        return arguments.isEmpty() ? null : normalizeGenericType(arguments.get(0));
+    }
+
+    private String removeRedundantKnownVariableCasts(String source) {
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> localTypes = new LinkedHashMap<>();
+        int methodDepth = 0;
+        Pattern typedLocal = Pattern.compile("^\\s*(?:final\\s+)?([A-Za-z_$][\\w$.]*"
+                + "(?:\\s*<[^;=]+>)?(?:\\s*\\[\\])?)\\s+([A-Za-z_$][\\w$]*)\\s*(?:=|;)");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (looksLikeMethodDeclaration(line)) {
+                localTypes.clear();
+                localTypes.putAll(methodParameterTypes(line));
+                methodDepth = Math.max(1, braceDelta(line));
+                continue;
+            }
+            if (methodDepth <= 0) {
+                continue;
+            }
+            lines[i] = removeRedundantKnownVariableCastsFromLine(line, localTypes);
+            Matcher localMatcher = typedLocal.matcher(lines[i]);
+            if (localMatcher.find()) {
+                localTypes.put(localMatcher.group(2), normalizeGenericType(localMatcher.group(1)));
+            }
+            methodDepth += braceDelta(line);
+            if (methodDepth <= 0) {
+                localTypes.clear();
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String removeRedundantKnownVariableCastsFromLine(String line, Map<String, String> localTypes) {
+        Matcher matcher = Pattern.compile("\\(([A-Za-z_$][\\w$.]*(?:\\s*<[^)]*>\\s*)?(?:\\s*\\[\\])?)\\)\\s*"
+                + "([A-Za-z_$][\\w$]*)\\b").matcher(line);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            String castType = normalizeGenericType(matcher.group(1));
+            String knownType = localTypes.get(matcher.group(2));
+            if (knownType != null && castMatchesKnownType(castType, knownType)) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group(2)));
+            } else {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group(0)));
+            }
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private boolean castMatchesKnownType(String castType, String knownType) {
+        if (castType.contains("<")) {
+            return false;
+        }
+        return rawSimpleTypeName(castType).equals(rawSimpleTypeName(knownType));
+    }
+
+    private int braceDelta(String line) {
+        int delta = 0;
+        boolean inString = false;
+        boolean inChar = false;
+        boolean escaping = false;
+        for (int i = 0; i < line.length(); i++) {
+            char current = line.charAt(i);
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (current == '\\') {
+                    escaping = true;
+                } else if (current == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inChar) {
+                if (escaping) {
+                    escaping = false;
+                } else if (current == '\\') {
+                    escaping = true;
+                } else if (current == '\'') {
+                    inChar = false;
+                }
+                continue;
+            }
+            if (current == '"') {
+                inString = true;
+            } else if (current == '\'') {
+                inChar = true;
+            } else if (current == '{') {
+                delta++;
+            } else if (current == '}') {
+                delta--;
+            }
+        }
+        return delta;
     }
 
     private String restoreRawHashMapTypesFromPutValues(String source) {

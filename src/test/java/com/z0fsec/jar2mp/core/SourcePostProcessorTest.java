@@ -20,6 +20,42 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesRedundantCastsFromKnownLocalAndParameterTypes() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    public void run(String param, RedissonClient redissonClient, "
+                        + "Map<String, List<Field>> logFieldCache) {\n"
+                        + "        List<?> nestedList = this.load();\n"
+                        + "        accept((String)param, (RedissonClient)redissonClient, "
+                        + "(Map)logFieldCache, (List)nestedList);\n"
+                        + "        Object raw = param;\n"
+                        + "        acceptString((String)raw);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("accept(param, redissonClient, logFieldCache, nestedList);"));
+        assertTrue(processed.contains("acceptString((String)raw);"));
+    }
+
+    @Test
+    void bridgesTypedListArgumentsForRocketMqBatchSyncSend() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "import java.util.List;\n\n"
+                        + "class Sample {\n"
+                        + "    public void clean(RocketMqSendService rocketMqSendService, List<Long> uidList) {\n"
+                        + "        rocketMqSendService.batchSyncSend(\"TOPIC\", uidList, 10);\n"
+                        + "        rocketMqSendService.batchSyncSend(\"TOPIC\", new ArrayList<Object>(uidList), 10);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("import java.util.ArrayList;"));
+        assertTrue(processed.contains(
+                "rocketMqSendService.batchSyncSend(\"TOPIC\", new ArrayList<Object>(uidList), 10);"));
+        assertFalse(processed.contains("batchSyncSend(\"TOPIC\", uidList, 10)"));
+    }
+
+    @Test
     void removesCollectionCastsFromCollectionUtilityCalls() {
         String processed = new SourcePostProcessor().process(
                 "if (CollectionUtils.isEmpty((Collection)list)) return;\n"
@@ -504,6 +540,25 @@ class SourcePostProcessorTest {
                 + "resp.getPageNum().intValue(), resp.getPageSize().intValue(), "
                 + "resp.getPages(), resp.getSummary());"));
         assertTrue(processed.contains("return new PageData(resp.getRowList(), (long)resp.getPageNum().intValue());"));
+    }
+
+    @Test
+    void keepsSixArgumentPageDataConstructorsRawWhenTrailingArgumentStartsWithCast() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<RedPacketGameStatisticsDTO> getGameStatistics(GameStatisticsReq req) {\n"
+                        + "    PageInfo<GameStatisticsPageResp> resp = this.api.getGameStatistics(req);\n"
+                        + "    List<RedPacketGameStatisticsDTO> result = mapper.toDTO("
+                        + "((GameStatisticsPageResp)resp.getRowList().getFirst()).getRespList());\n"
+                        + "    return new PageData(result, resp.getTotal().longValue(), "
+                        + "resp.getPageNum().intValue(), resp.getPageSize().intValue(), "
+                        + "resp.getPages(), ((GameStatisticsPageResp)resp.getRowList().getFirst()).getSummaryResp());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("return new PageData(result, resp.getTotal().longValue(), "
+                + "resp.getPageNum().intValue(), resp.getPageSize().intValue(), "
+                + "resp.getPages(), resp.getRowList().getFirst().getSummaryResp());"));
+        assertFalse(processed.contains("new PageData<>(result, resp.getTotal().longValue(), "
+                + "resp.getPageNum().intValue(), resp.getPageSize().intValue(), resp.getPages()"));
     }
 
     @Test
