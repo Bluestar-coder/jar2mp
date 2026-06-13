@@ -285,11 +285,140 @@ public class SourcePostProcessor {
         processed = restoreRoleMenuListTypes(processed);
         processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
         processed = restoreRawHashMapTypesFromTypedMethodArguments(processed);
+        processed = restoreRawHashMapTypesFromPutValues(processed);
         processed = restoreDiamondConstructorsForTypedCollectionAssignments(processed);
         processed = restoreCheckedExceptionHandlers(processed);
         processed = restoreSwitchBraceSpacing(processed);
         processed = restoreUnindentedMemberMethodDeclarations(processed);
         return processed;
+    }
+
+    private String restoreRawHashMapTypesFromPutValues(String source) {
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> localTypes = new LinkedHashMap<>();
+        Map<String, Integer> rawHashMapLines = new LinkedHashMap<>();
+        Pattern rawHashMap = Pattern.compile("^(\\s*)HashMap\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "new\\s+HashMap\\s*\\(([^;\\n]*)\\);");
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (looksLikeMethodDeclaration(line)) {
+                localTypes.clear();
+                rawHashMapLines.clear();
+                localTypes.putAll(methodParameterTypes(line));
+            }
+
+            Matcher typedLocal = Pattern.compile("^\\s*([A-Za-z_$][\\w$.]*(?:\\s*<[^;=]+>)?)\\s+"
+                    + "([A-Za-z_$][\\w$]*)\\s*(?:=|;)").matcher(line);
+            if (typedLocal.find() && !typedLocal.group(1).equals("HashMap")) {
+                localTypes.put(typedLocal.group(2), normalizeGenericType(typedLocal.group(1)));
+            }
+
+            Matcher rawMatcher = rawHashMap.matcher(line);
+            if (rawMatcher.find()) {
+                rawHashMapLines.put(rawMatcher.group(2), i);
+                continue;
+            }
+
+            for (Map.Entry<String, Integer> entry : new ArrayList<>(rawHashMapLines.entrySet())) {
+                String mapName = entry.getKey();
+                String[] keyAndValueTypes = inferPutKeyAndValueTypes(line, mapName, localTypes);
+                if (keyAndValueTypes == null) {
+                    continue;
+                }
+                int declarationLine = entry.getValue();
+                Matcher declarationMatcher = rawHashMap.matcher(lines[declarationLine]);
+                if (!declarationMatcher.find()) {
+                    rawHashMapLines.remove(mapName);
+                    continue;
+                }
+                String mapType = "HashMap<" + keyAndValueTypes[0] + ", " + keyAndValueTypes[1] + ">";
+                lines[declarationLine] = declarationMatcher.replaceFirst(Matcher.quoteReplacement(
+                        declarationMatcher.group(1) + mapType + " " + mapName
+                                + " = new HashMap(" + declarationMatcher.group(3) + ");"));
+                localTypes.put(mapName, mapType);
+                rawHashMapLines.remove(mapName);
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private Map<String, String> methodParameterTypes(String line) {
+        Map<String, String> parameterTypes = new LinkedHashMap<>();
+        int openParen = line.indexOf('(');
+        int closeParen = findMatchingParen(line, openParen);
+        if (openParen < 0 || closeParen < 0) {
+            return parameterTypes;
+        }
+        for (String parameter : splitTopLevelArguments(line.substring(openParen + 1, closeParen))) {
+            String type = parameterType(parameter);
+            String name = parameterName(parameter);
+            if (type != null && name != null) {
+                parameterTypes.put(name, type);
+            }
+        }
+        return parameterTypes;
+    }
+
+    private String parameterName(String parameter) {
+        String trimmed = parameter.trim();
+        int split = lastTopLevelWhitespace(trimmed);
+        if (split < 0 || split + 1 >= trimmed.length()) {
+            return null;
+        }
+        return trimmed.substring(split + 1).replace("...", "").trim();
+    }
+
+    private String[] inferPutKeyAndValueTypes(String line, String mapName, Map<String, String> localTypes) {
+        int putIndex = line.indexOf(mapName + ".put(");
+        if (putIndex < 0) {
+            return null;
+        }
+        int openParen = line.indexOf('(', putIndex);
+        int closeParen = findMatchingParen(line, openParen);
+        if (openParen < 0 || closeParen < 0) {
+            return null;
+        }
+        List<String> arguments = splitTopLevelArguments(line.substring(openParen + 1, closeParen));
+        if (arguments.size() != 2) {
+            return null;
+        }
+        String keyType = inferMapKeyExpressionType(arguments.get(0), localTypes);
+        String valueType = inferMapValueExpressionType(arguments.get(1), localTypes);
+        return keyType == null || valueType == null ? null : new String[]{keyType, valueType};
+    }
+
+    private String inferMapKeyExpressionType(String expression, Map<String, String> localTypes) {
+        String trimmed = stripLeadingCasts(expression);
+        String localType = localTypes.get(trimmed);
+        if (localType != null) {
+            return localType;
+        }
+        String inferred = inferExpressionType(trimmed);
+        if (inferred != null) {
+            return inferred;
+        }
+        if (trimmed.matches("Boolean\\.(?:TRUE|FALSE)|\"[^\"]*\"|\\d+L?|\\d+\\.\\d+")) {
+            return inferLiteralType(trimmed);
+        }
+        return null;
+    }
+
+    private String inferMapValueExpressionType(String expression, Map<String, String> localTypes) {
+        String trimmed = stripLeadingCasts(expression);
+        String valueType = localTypes.get(trimmed);
+        return "Object".equals(valueType) ? null : valueType;
+    }
+
+    private String stripLeadingCasts(String expression) {
+        String trimmed = expression.trim();
+        while (true) {
+            Matcher matcher = Pattern.compile("^\\([A-Za-z_$][\\w$]*(?:\\s*<[^)]*>\\s*)?\\)\\s*(.+)$")
+                    .matcher(trimmed);
+            if (!matcher.find()) {
+                return trimmed;
+            }
+            trimmed = matcher.group(1).trim();
+        }
     }
 
     private String restoreRawHashMapTypesFromTypedMethodArguments(String source) {

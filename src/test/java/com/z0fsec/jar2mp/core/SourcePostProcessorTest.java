@@ -1099,6 +1099,30 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresRawHashMapTypeFromTypedPutValue() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run() {\n"
+                        + "        HashMap valueMap = new HashMap(16);\n"
+                        + "        HashMap<String, Object> rowMap = new HashMap<>(16);\n"
+                        + "        String traceId = UUID.randomUUID().toString();\n"
+                        + "        valueMap.put(traceId, rowMap);\n"
+                        + "        HashMap literalKeyMap = new HashMap();\n"
+                        + "        literalKeyMap.put(\"module\", rowMap);\n"
+                        + "        HashMap rawMap = new HashMap(16);\n"
+                        + "        Object rawValue = rowMap;\n"
+                        + "        rawMap.put(traceId, rawValue);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(
+                "HashMap<String, HashMap<String, Object>> valueMap = new HashMap<>(16);"));
+        assertTrue(processed.contains(
+                "HashMap<String, HashMap<String, Object>> literalKeyMap = new HashMap<>();"));
+        assertTrue(processed.contains("HashMap rawMap = new HashMap(16);"));
+    }
+
+    @Test
     void restoresMapEntryEnhancedForTypeFromKeyAndValueAssignments() {
         String processed = new SourcePostProcessor().process(
                 "for (Map.Entry orderEntry : toBeRefundOrderMap.entrySet()) {\n"
