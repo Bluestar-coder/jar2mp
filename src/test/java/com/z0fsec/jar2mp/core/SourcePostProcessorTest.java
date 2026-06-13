@@ -56,6 +56,60 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresRawArrayListTypesFromTypedListMethodArguments() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    public void run(List<User> userList) {\n"
+                        + "        ArrayList disableFailUserIdList = Lists.newArrayList();\n"
+                        + "        ArrayList removeUidList = new ArrayList();\n"
+                        + "        this.disableUser(((User)userList.get(1)).getUid(), (List)disableFailUserIdList);\n"
+                        + "        this.removeUsers((List)removeUidList);\n"
+                        + "    }\n"
+                        + "    private void disableUser(Long uid, List<Long> disableFailUserIdList) {\n"
+                        + "    }\n"
+                        + "    private void removeUsers(List<Long> removeUidList) {\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("List<Long> disableFailUserIdList = Lists.newArrayList();"));
+        assertTrue(processed.contains("List<Long> removeUidList = new ArrayList<>();"));
+        assertTrue(processed.contains(
+                "this.disableUser(((User)userList.get(1)).getUid(), disableFailUserIdList);"));
+        assertTrue(processed.contains("this.removeUsers(removeUidList);"));
+    }
+
+    @Test
+    void restoresRawCollectionTypesFromBytecodeLocalGenerics() {
+        Map<String, String> localTypes = new java.util.LinkedHashMap<>();
+        localTypes.put("disableFailUserIdList", "java.util.List<java.lang.Long>");
+        localTypes.put("uidLabelSet", "java.util.Set<java.lang.Long>");
+        localTypes.put("balanceExcels", "java.util.ArrayList<com.otc.admin.domain.dto.user.LabelCoinBalanceExcel>");
+
+        String processed = new SourcePostProcessor().process(
+                "package com.otc.admin.biz;\n\n"
+                        + "import com.otc.admin.domain.dto.user.LabelCoinBalanceExcel;\n"
+                        + "import java.util.ArrayList;\n"
+                        + "import java.util.List;\n"
+                        + "import java.util.Set;\n\n"
+                        + "class Sample {\n"
+                        + "    public void run() {\n"
+                        + "        ArrayList disableFailUserIdList = Lists.newArrayList();\n"
+                        + "        Set uidLabelSet = this.detailService.queryByLabelName(labelName);\n"
+                        + "        ArrayList balanceExcels = new ArrayList();\n"
+                        + "    }\n"
+                        + "}\n",
+                null,
+                java.util.Collections.emptyMap(),
+                java.util.Collections.emptyMap(),
+                localTypes);
+
+        assertTrue(processed.contains("List<Long> disableFailUserIdList = Lists.newArrayList();"));
+        assertTrue(processed.contains("Set<Long> uidLabelSet = this.detailService.queryByLabelName(labelName);"));
+        assertTrue(processed.contains(
+                "ArrayList<LabelCoinBalanceExcel> balanceExcels = new ArrayList<>();"));
+    }
+
+    @Test
     void removesCollectionCastsFromCollectionUtilityCalls() {
         String processed = new SourcePostProcessor().process(
                 "if (CollectionUtils.isEmpty((Collection)list)) return;\n"

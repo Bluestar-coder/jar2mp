@@ -180,6 +180,12 @@ public class SourcePostProcessor {
 
     public String process(String source, String className, Map<String, Map<Integer, String>> switchCaseMaps,
                           Map<String, Map<String, String>> mapstructInputTypes) {
+        return process(source, className, switchCaseMaps, mapstructInputTypes, Collections.emptyMap());
+    }
+
+    public String process(String source, String className, Map<String, Map<Integer, String>> switchCaseMaps,
+                          Map<String, Map<String, String>> mapstructInputTypes,
+                          Map<String, String> localGenericTypes) {
         if (source == null || source.isEmpty()) {
             return source;
         }
@@ -285,6 +291,8 @@ public class SourcePostProcessor {
         processed = restoreRoleMenuListTypes(processed);
         processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
         processed = restoreRawHashMapTypesFromTypedMethodArguments(processed);
+        processed = restoreRawArrayListTypesFromTypedMethodArguments(processed);
+        processed = restoreLocalGenericTypesFromBytecode(processed, localGenericTypes);
         processed = restoreRawHashMapTypesFromPutValues(processed);
         processed = restoreDiamondConstructorsForTypedCollectionAssignments(processed);
         processed = removeRedundantKnownVariableCasts(processed);
@@ -760,6 +768,189 @@ public class SourcePostProcessor {
             trimmed = castMatcher.group(1).trim();
         }
         return trimmed.equals(variableName);
+    }
+
+    private String restoreRawArrayListTypesFromTypedMethodArguments(String source) {
+        Map<String, Map<Integer, String>> listParameterTypes = collectTypedListParameterTypes(source);
+        if (listParameterTypes.isEmpty()) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        Pattern rawArrayList = Pattern.compile("^(\\s*)ArrayList\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "(Lists\\.newArrayList\\s*\\(\\s*\\)|new\\s+ArrayList\\s*\\(([^;\\n]*)\\))\\s*;");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = rawArrayList.matcher(lines[i]);
+            if (!matcher.find()) {
+                continue;
+            }
+            String variableName = matcher.group(2);
+            String listType = findTypedListArgumentType(lines, i + 1, variableName, listParameterTypes);
+            if (listType == null) {
+                continue;
+            }
+            String initializer = matcher.group(3);
+            if (initializer.startsWith("new ArrayList")) {
+                initializer = "new ArrayList<>(" + matcher.group(4) + ")";
+            }
+            lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                    matcher.group(1) + listType + " " + variableName + " = " + initializer + ";"));
+        }
+        return String.join("\n", lines);
+    }
+
+    private Map<String, Map<Integer, String>> collectTypedListParameterTypes(String source) {
+        Map<String, Map<Integer, String>> parameterTypes = new LinkedHashMap<>();
+        String[] lines = source.split("\\n", -1);
+        for (String line : lines) {
+            if (!looksLikeMethodDeclaration(line)) {
+                continue;
+            }
+            int openParen = line.indexOf('(');
+            int closeParen = findMatchingParen(line, openParen);
+            if (openParen < 0 || closeParen < 0) {
+                continue;
+            }
+            String beforeParen = line.substring(0, openParen).trim();
+            int methodNameStart = beforeParen.lastIndexOf(' ');
+            if (methodNameStart < 0) {
+                continue;
+            }
+            String methodName = beforeParen.substring(methodNameStart + 1);
+            List<String> parameters = splitTopLevelArguments(line.substring(openParen + 1, closeParen));
+            Map<Integer, String> typedParameters = new LinkedHashMap<>();
+            for (int i = 0; i < parameters.size(); i++) {
+                String parameterType = parameterType(parameters.get(i));
+                if (parameterType != null && rawSimpleTypeName(parameterType).equals("List")
+                        && parameterType.contains("<")) {
+                    typedParameters.put(i, normalizeGenericType(parameterType));
+                }
+            }
+            if (!typedParameters.isEmpty()) {
+                Map<Integer, String> existingParameters =
+                        parameterTypes.computeIfAbsent(methodName, ignored -> new LinkedHashMap<>());
+                for (Map.Entry<Integer, String> entry : typedParameters.entrySet()) {
+                    existingParameters.putIfAbsent(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        return parameterTypes;
+    }
+
+    private String findTypedListArgumentType(String[] lines, int start, String variableName,
+                                            Map<String, Map<Integer, String>> listParameterTypes) {
+        for (int i = start; i < lines.length; i++) {
+            if (i != start && looksLikeMethodDeclaration(lines[i])) {
+                return null;
+            }
+            for (Map.Entry<String, Map<Integer, String>> entry : listParameterTypes.entrySet()) {
+                String methodName = entry.getKey();
+                int searchIndex = 0;
+                while (true) {
+                    int methodIndex = lines[i].indexOf(methodName + "(", searchIndex);
+                    if (methodIndex < 0) {
+                        methodIndex = lines[i].indexOf("." + methodName + "(", searchIndex);
+                    }
+                    if (methodIndex < 0) {
+                        break;
+                    }
+                    int openParen = lines[i].indexOf('(', methodIndex);
+                    int closeParen = findMatchingParen(lines[i], openParen);
+                    if (closeParen < 0) {
+                        break;
+                    }
+                    List<String> arguments = splitTopLevelArguments(lines[i].substring(openParen + 1, closeParen));
+                    for (Map.Entry<Integer, String> typedParameter : entry.getValue().entrySet()) {
+                        int parameterIndex = typedParameter.getKey();
+                        if (parameterIndex < arguments.size()
+                                && argumentReferencesVariable(arguments.get(parameterIndex), variableName)) {
+                            return typedParameter.getValue();
+                        }
+                    }
+                    searchIndex = closeParen + 1;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String restoreLocalGenericTypesFromBytecode(String source, Map<String, String> localGenericTypes) {
+        if (localGenericTypes == null || localGenericTypes.isEmpty()) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> imports = simpleImports(source);
+        String packageName = findPackageName(source, null);
+        boolean changed = false;
+        for (int i = 0; i < lines.length; i++) {
+            for (Map.Entry<String, String> entry : localGenericTypes.entrySet()) {
+                String variableName = entry.getKey();
+                String targetType = simplifyJavaType(entry.getValue(), imports, packageName);
+                String rewritten = restoreLocalGenericTypeDeclaration(lines[i], variableName, targetType);
+                if (!rewritten.equals(lines[i])) {
+                    lines[i] = rewritten;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        return changed ? String.join("\n", lines) : source;
+    }
+
+    private String restoreLocalGenericTypeDeclaration(String line, String variableName, String targetType) {
+        if (targetType == null || !targetType.contains("<")) {
+            return line;
+        }
+        Pattern declaration = Pattern.compile("^(\\s*)((?:final\\s+)?)"
+                + "((?:java\\.util\\.)?(?:List|ArrayList|Set|HashSet|Map|HashMap))\\s+"
+                + Pattern.quote(variableName) + "\\s*=\\s*([^;\\n{}]+);(\\s*)$");
+        Matcher matcher = declaration.matcher(line);
+        if (!matcher.find()) {
+            return line;
+        }
+        String currentRawType = rawSimpleTypeName(matcher.group(3));
+        String targetRawType = rawSimpleTypeName(targetType);
+        if (!canRewriteRawCollectionType(currentRawType, targetRawType)) {
+            return line;
+        }
+        String initializer = restoreRawCollectionInitializerDiamond(matcher.group(4), currentRawType);
+        return matcher.group(1) + matcher.group(2) + targetType + " " + variableName + " = "
+                + initializer + ";" + matcher.group(5);
+    }
+
+    private boolean canRewriteRawCollectionType(String currentRawType, String targetRawType) {
+        if (currentRawType.equals(targetRawType)) {
+            return true;
+        }
+        if ("ArrayList".equals(currentRawType) && "List".equals(targetRawType)) {
+            return true;
+        }
+        if ("HashSet".equals(currentRawType) && "Set".equals(targetRawType)) {
+            return true;
+        }
+        return "HashMap".equals(currentRawType) && "Map".equals(targetRawType);
+    }
+
+    private String restoreRawCollectionInitializerDiamond(String initializer, String currentRawType) {
+        Pattern rawConstructor = Pattern.compile("^new\\s+" + Pattern.quote(currentRawType)
+                + "\\s*\\(([^;{}]*)\\)$");
+        Matcher matcher = rawConstructor.matcher(initializer.trim());
+        if (!matcher.find()) {
+            return initializer;
+        }
+        return "new " + currentRawType + "<>(" + matcher.group(1) + ")";
+    }
+
+    private String simplifyJavaType(String javaType, Map<String, String> imports, String packageName) {
+        String simplified = javaType.replace("java.lang.", "");
+        if (packageName != null && !packageName.isEmpty()) {
+            simplified = simplified.replace(packageName + ".", "");
+        }
+        List<Map.Entry<String, String>> orderedImports = new ArrayList<>(imports.entrySet());
+        orderedImports.sort((left, right) -> Integer.compare(right.getValue().length(), left.getValue().length()));
+        for (Map.Entry<String, String> entry : orderedImports) {
+            simplified = simplified.replace(entry.getValue(), entry.getKey());
+        }
+        return simplified;
     }
 
     private String restoreDiamondConstructorsForTypedCollectionAssignments(String source) {
