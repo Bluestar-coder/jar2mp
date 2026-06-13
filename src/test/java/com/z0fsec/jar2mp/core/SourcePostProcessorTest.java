@@ -398,6 +398,23 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesRedundantPageInfoRowListElementCasts() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<RedPacketGameStatisticsDTO> getGameStatistics(GameStatisticsReq req) {\n"
+                        + "    PageInfo resp = this.redPacketGameStatisticsApi.getGameStatistics(req);\n"
+                        + "    List result = mapper.toDTO(((GameStatisticsPageResp)resp.getRowList().getFirst()).getRespList());\n"
+                        + "    return new PageData(result, resp.getTotal().longValue(), "
+                        + "(long)resp.getPageNum().intValue(), (long)resp.getPageSize().intValue(), "
+                        + "(long)resp.getPages(), ((GameStatisticsPageResp)resp.getRowList().getFirst()).getSummaryResp());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("PageInfo<GameStatisticsPageResp> resp ="));
+        assertTrue(processed.contains("mapper.toDTO(resp.getRowList().getFirst().getRespList())"));
+        assertTrue(processed.contains("resp.getPages(), resp.getRowList().getFirst().getSummaryResp());"));
+        assertFalse(processed.contains("((GameStatisticsPageResp)resp.getRowList().getFirst())"));
+    }
+
+    @Test
     void ignoresCollectionCastsWhenInferringPageInfoElementType() {
         String processed = new SourcePostProcessor().process(
                 "public PageData<ChannelPageForWebResp> page(ChannelReq req) {\n"

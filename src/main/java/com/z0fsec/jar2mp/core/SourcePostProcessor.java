@@ -208,6 +208,7 @@ public class SourcePostProcessor {
         processed = restorePageInfoRowListElementTypes(processed);
         processed = restorePageInfoTypesFromMapstructRows(processed, mapstructInputTypes);
         processed = restorePageInfoTypesFromLocalMapperMethods(processed);
+        processed = removeRedundantPageInfoRowListElementCasts(processed);
         processed = restoreLocalTypesFromGenericMethodReturns(processed);
         processed = restorePageInfoLocalsFromPageDataReturnTypes(processed);
         processed = restoreListLocalsFromListReturnTypes(processed);
@@ -917,6 +918,47 @@ public class SourcePostProcessor {
             }
         }
         return null;
+    }
+
+    private String removeRedundantPageInfoRowListElementCasts(String source) {
+        String[] lines = source.split("\\n", -1);
+        Map<String, String> pageInfoTypes = new LinkedHashMap<>();
+        Pattern declaration = Pattern.compile("\\bPageInfo\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s+"
+                + "([A-Za-z_$][\\w$]*)\\b");
+        for (int i = 0; i < lines.length; i++) {
+            if (looksLikeMethodDeclaration(lines[i])) {
+                pageInfoTypes.clear();
+            }
+            Matcher declarationMatcher = declaration.matcher(lines[i]);
+            while (declarationMatcher.find()) {
+                pageInfoTypes.put(declarationMatcher.group(2), declarationMatcher.group(1));
+            }
+            String line = lines[i];
+            for (Map.Entry<String, String> entry : pageInfoTypes.entrySet()) {
+                line = removeRedundantPageInfoRowListElementCast(line, entry.getKey(), entry.getValue());
+            }
+            lines[i] = line;
+        }
+        return String.join("\n", lines);
+    }
+
+    private String removeRedundantPageInfoRowListElementCast(String line, String pageInfoName, String elementType) {
+        String simpleElementType = simpleTypeName(elementType);
+        String typePattern = Pattern.quote(elementType);
+        if (!simpleElementType.equals(elementType)) {
+            typePattern = "(?:" + Pattern.quote(elementType) + "|" + Pattern.quote(simpleElementType) + ")";
+        }
+        Pattern castPattern = Pattern.compile("\\(\\(\\s*" + typePattern + "\\s*\\)\\s*"
+                + Pattern.quote(pageInfoName)
+                + "\\.getRowList\\(\\)\\.(getFirst\\(\\)|getLast\\(\\)|get\\([^()]*\\))\\)");
+        Matcher matcher = castPattern.matcher(line);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    pageInfoName + ".getRowList()." + matcher.group(1)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
     }
 
     private String restorePageInfoTypesFromLocalMapperMethods(String source) {
