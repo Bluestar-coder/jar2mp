@@ -2270,11 +2270,15 @@ public class SourcePostProcessor {
                 String indent = leadingWhitespace(lines[i]);
                 lines[i] = indent + "}\n"
                         + indent + "catch (Exception e) {\n"
-                        + indent + "    log.error(\"获取导出总数失败 -> {}\", ExceptionUtil.stacktraceToString((Throwable)e));\n"
+                        + indent + "    log.error(\"获取导出总数失败 -> {}\", ExceptionUtil.stacktraceToString(e));\n"
                         + indent + "    throw new BusinessException(\"获取导出总数失败\");\n"
                         + indent + "}\n"
                         + lines[i];
                 inGetCount = false;
+                continue;
+            }
+            if (insertedTry && !lines[i].trim().isEmpty()) {
+                lines[i] = leadingWhitespace(lines[i]) + "    " + lines[i].trim();
             }
         }
         return String.join("\n", lines);

@@ -2247,7 +2247,10 @@ class SourcePostProcessorTest {
                         + "}\n");
 
         assertTrue(processed.contains("try {\n        Object result = null;"));
+        assertTrue(processed.contains("try {\n        Object result = null;\n        result = method.invoke(instance, paramObj);"));
         assertTrue(processed.contains("catch (Exception e)"));
+        assertTrue(processed.contains("ExceptionUtil.stacktraceToString(e)"));
+        assertFalse(processed.contains("(Throwable)e"));
         assertTrue(processed.contains("throw new BusinessException(\"获取导出总数失败\");"));
     }
 
