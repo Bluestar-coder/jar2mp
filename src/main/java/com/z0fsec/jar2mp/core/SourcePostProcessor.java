@@ -86,6 +86,9 @@ public class SourcePostProcessor {
     private static final Pattern PAGE_DATA_METHOD_DECLARATION = Pattern.compile(
             "\\b(?:Result\\s*<\\s*)?PageData\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s*>?\\s+"
                     + "[A-Za-z_$][\\w$]*\\s*\\(");
+    private static final Pattern SAME_CLASS_STRING_CONSTANT_DECLARATION = Pattern.compile(
+            "(?m)^\\s*(?:public|protected|private)?\\s*(?:static\\s+final|final\\s+static)\\s+String\\s+"
+                    + "([A-Z][A-Z0-9_]*)\\s*=\\s*(\"(?:\\\\.|[^\"\\\\])*\")\\s*;");
     private static final Pattern LIST_METHOD_DECLARATION = Pattern.compile(
             "\\bList\\s*<\\s*([A-Za-z_$][\\w$.]*)\\s*>\\s+[A-Za-z_$][\\w$]*\\s*\\(");
     private static final Pattern WRAPPED_LIST_METHOD_DECLARATION = Pattern.compile(
@@ -203,6 +206,7 @@ public class SourcePostProcessor {
         processed = removeCollectionUtilityCasts(processed);
         processed = restoreLettuceTimeoutAutounboxing(processed);
         processed = restoreKnownGlobalConstantStringLiterals(processed);
+        processed = restoreSameClassStringConstantReferences(processed);
         processed = restoreCfrBrokenBreakMarkers(processed);
         processed = removeParameterArrayCasts(processed);
         processed = restoreStringLocalsFromToStringAssignments(processed);
@@ -3454,6 +3458,45 @@ public class SourcePostProcessor {
             processed = ensureImport(processed, "com.otc.admin.domain.constant.GlobalConstant");
         }
         return processed;
+    }
+
+    private String restoreSameClassStringConstantReferences(String source) {
+        Matcher matcher = SAME_CLASS_STRING_CONSTANT_DECLARATION.matcher(source);
+        Map<String, String> constantsByLiteral = new LinkedHashMap<>();
+        Set<String> duplicateLiterals = new LinkedHashSet<>();
+        while (matcher.find()) {
+            String literal = matcher.group(2);
+            String existing = constantsByLiteral.putIfAbsent(literal, matcher.group(1));
+            if (existing != null) {
+                duplicateLiterals.add(literal);
+            }
+        }
+        duplicateLiterals.forEach(constantsByLiteral::remove);
+        if (constantsByLiteral.isEmpty()) {
+            return source;
+        }
+
+        String[] lines = source.split("\n", -1);
+        boolean changed = false;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            String trimmed = line.trim();
+            if (trimmed.startsWith("@")
+                    || trimmed.startsWith("package ")
+                    || trimmed.startsWith("import ")
+                    || SAME_CLASS_STRING_CONSTANT_DECLARATION.matcher(line).find()) {
+                continue;
+            }
+            String restored = line;
+            for (Map.Entry<String, String> entry : constantsByLiteral.entrySet()) {
+                restored = restored.replace(entry.getKey(), entry.getValue());
+            }
+            if (!restored.equals(line)) {
+                lines[i] = restored;
+                changed = true;
+            }
+        }
+        return changed ? String.join("\n", lines) : source;
     }
 
     private String unwrapSFunctionArraySelects(String source) {

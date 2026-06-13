@@ -193,6 +193,26 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresSameClassStaticFinalStringConstantReferences() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    private static final String PREFIX = \"non_blocking_lock:\";\n"
+                        + "    private static final String LOCK_VALUE = \"locked\";\n"
+                        + "    void run(String key, RedisTemplate redisTemplate) {\n"
+                        + "        String lockKey = \"non_blocking_lock:\".concat(key);\n"
+                        + "        redisTemplate.opsForValue().setIfAbsent(lockKey, \"locked\", 10L, TimeUnit.SECONDS);\n"
+                        + "        log.info(\"other\");\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("private static final String PREFIX = \"non_blocking_lock:\";"));
+        assertTrue(processed.contains("private static final String LOCK_VALUE = \"locked\";"));
+        assertTrue(processed.contains("String lockKey = PREFIX.concat(key);"));
+        assertTrue(processed.contains("setIfAbsent(lockKey, LOCK_VALUE, 10L, TimeUnit.SECONDS);"));
+        assertTrue(processed.contains("log.info(\"other\");"));
+    }
+
+    @Test
     void restoresPrintableUnicodeEscapesInsideLiterals() {
         String processed = new SourcePostProcessor().process(
                 "log.info(\"" + "\\u8bf7" + "\\u6c42" + "\\u6765" + "\\u6e90" + "[{}]\");\n"
