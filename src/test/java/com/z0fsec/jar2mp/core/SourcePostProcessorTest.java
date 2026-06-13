@@ -20,6 +20,24 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesRedundantLiteralCasts() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void run(Object value) {\n"
+                        + "        DateFormatUtils.formatDate(currentDate, (String)\"yyyy-MM-dd\");\n"
+                        + "        TimeSplitter.splitTimeRange(startTime, endTime, (int)7);\n"
+                        + "        NonBlockingLockUtil.lockAndExecute(key, (long)10L, supplier);\n"
+                        + "        accept((String)value);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("DateFormatUtils.formatDate(currentDate, \"yyyy-MM-dd\");"));
+        assertTrue(processed.contains("TimeSplitter.splitTimeRange(startTime, endTime, 7);"));
+        assertTrue(processed.contains("NonBlockingLockUtil.lockAndExecute(key, 10L, supplier);"));
+        assertTrue(processed.contains("accept((String)value);"));
+    }
+
+    @Test
     void removesRedundantCastsFromKnownLocalAndParameterTypes() {
         String processed = new SourcePostProcessor().process(
                 "class Sample {\n"
@@ -1043,7 +1061,7 @@ class SourcePostProcessorTest {
                         + "Lists.partition((List)userList, (int)100).stream()"
                         + ".map(elist -> elist.stream().map(User::getUid).collect(Collectors.toList()));\n");
 
-        assertTrue(processed.contains("Lists.partition(userList, (int)100).stream()"));
+        assertTrue(processed.contains("Lists.partition(userList, 100).stream()"));
         assertFalse(processed.contains("Lists.partition((List)userList"));
     }
 

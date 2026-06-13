@@ -203,6 +203,7 @@ public class SourcePostProcessor {
         processed = restoreSimpleThisMethodReferenceLambdas(processed);
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
+        processed = removeRedundantLiteralCasts(processed);
         processed = removeCollectionUtilityCasts(processed);
         processed = restoreLettuceTimeoutAutounboxing(processed);
         processed = restoreKnownGlobalConstantStringLiterals(processed);
@@ -3438,6 +3439,12 @@ public class SourcePostProcessor {
 
     private String removeGuavaPartitionListCasts(String source) {
         return source.replaceAll("Lists\\.partition\\(\\s*\\(List\\)\\s*", "Lists.partition(");
+    }
+
+    private String removeRedundantLiteralCasts(String source) {
+        String processed = source.replaceAll("\\(String\\)\\s*(\"(?:\\\\.|[^\"\\\\])*\")", "$1");
+        processed = processed.replaceAll("\\(int\\)\\s*(-?\\d+)(?![lL])", "$1");
+        return processed.replaceAll("\\(long\\)\\s*(-?\\d+[lL])", "$1");
     }
 
     private String removeCollectionUtilityCasts(String source) {
