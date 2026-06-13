@@ -174,6 +174,7 @@ public class SourcePostProcessor {
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
         processed = removeCollectionUtilityCasts(processed);
+        processed = restoreLettuceTimeoutAutounboxing(processed);
         processed = restoreCfrBrokenBreakMarkers(processed);
         processed = removeParameterArrayCasts(processed);
         processed = restoreStringLocalsFromToStringAssignments(processed);
@@ -2486,6 +2487,11 @@ public class SourcePostProcessor {
     private String removeCollectionUtilityCasts(String source) {
         return source.replaceAll("((?:CollectionUtils|CollUtil)\\.is(?:Empty|NotEmpty)\\(\\s*)"
                 + "\\((?:java\\.util\\.)?Collection(?:\\s*<\\s*\\?\\s*>)?\\)\\s*", "$1");
+    }
+
+    private String restoreLettuceTimeoutAutounboxing(String source) {
+        return source.replaceAll("(lettuceConnectionFactory\\([^;\\n]*?,\\s*)([A-Za-z_$][\\w$]*)\\.longValue\\(\\)",
+                "$1$2");
     }
 
     private String unwrapSFunctionArraySelects(String source) {

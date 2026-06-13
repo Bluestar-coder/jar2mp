@@ -34,6 +34,25 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresLettuceTimeoutAutounboxing() {
+        String processed = new SourcePostProcessor().process(
+                "private LettuceConnectionFactory getConnectionFactory(Tuple6 redisConfig) {\n"
+                        + "    Long timeout = (Long)redisConfig._2();\n"
+                        + "    LettuceConnectionFactory connectionFactory = this.lettuceConnectionFactory("
+                        + "standaloneConfiguration, genericObjectPoolConfig, timeout.longValue());\n"
+                        + "    return connectionFactory;\n"
+                        + "}\n"
+                        + "private LettuceConnectionFactory lettuceConnectionFactory("
+                        + "RedisStandaloneConfiguration standaloneConfiguration, "
+                        + "GenericObjectPoolConfig genericObjectPoolConfig, long timeout) {\n"
+                        + "    return null;\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("standaloneConfiguration, genericObjectPoolConfig, timeout);"));
+        assertFalse(processed.contains("timeout.longValue()"));
+    }
+
+    @Test
     void restoresPrintableUnicodeEscapesInsideLiterals() {
         String processed = new SourcePostProcessor().process(
                 "log.info(\"" + "\\u8bf7" + "\\u6c42" + "\\u6765" + "\\u6e90" + "[{}]\");\n"
