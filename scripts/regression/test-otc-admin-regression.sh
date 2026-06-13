@@ -115,6 +115,10 @@ class Sample {
         Sample other = (Sample)((Object)o);
         return !((Object)this$id).equals(other$id);
     }
+
+    Object page(Request req) {
+        return new PageData<>(Collections.emptyList(), 0L, req.getPageNum().intValue(), req.getPageSize().intValue());
+    }
 }
 JAVA
 
@@ -123,6 +127,10 @@ class Sample {
     boolean same(Object o) {
         Sample other = (Sample)o;
         return !(this$id).equals(other$id);
+    }
+
+    Object page(Request req) {
+        return new PageData(Collections.emptyList(), 0L, (long)req.getPageNum().intValue(), (long)req.getPageSize().intValue());
     }
 }
 JAVA

@@ -680,6 +680,7 @@ normalize_java_file_for_decompiler_artifacts() {
       }
       while (gsub(/<[^<>;{}()=]+>/, "", line)) {
       }
+      gsub(/<>/, "", line)
       while (gsub(/\([[:space:]]*((byte|short|int|long|float|double|char|boolean)|([A-Z][A-Za-z0-9_$]*|([a-z_][A-Za-z0-9_$]*\.)+[A-Za-z_$][A-Za-z0-9_$]*)(\.[A-Za-z_$][A-Za-z0-9_$]*)*(\[\])?)[[:space:]]*\)/, "", line)) {
       }
       while (match(line, /= \([A-Za-z_$][A-Za-z0-9_$]*\)/)) {
