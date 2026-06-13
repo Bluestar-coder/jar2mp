@@ -403,7 +403,9 @@ class SourcePostProcessorTest {
                         + "    return this.handleResult(pageData);\n"
                         + "}\n");
 
-        assertTrue(processed.contains("PageData<GroupsMemberListDTO> pageData"));
+        assertTrue(processed.contains("PageData<GroupsMemberListDTO> pageData = "
+                + "this.groupMemberService.queryByPage(req, pageRequest);"));
+        assertFalse(processed.contains("pageData="));
         assertTrue(processed.contains("List<GroupsMemberListDTO> groupsMemberListDTOList = pageData.getList();"));
     }
 
@@ -565,7 +567,9 @@ class SourcePostProcessorTest {
                         + "    return new PageData(resp.getRowList(), resp.getTotal());\n"
                         + "}\n");
 
-        assertTrue(processed.contains("PageInfo<GroupObserverMemberAuditPageResp> resp"));
+        assertTrue(processed.contains("PageInfo<GroupObserverMemberAuditPageResp> resp = "
+                + "this.groupObserverMemberApi.getObserverList(req);"));
+        assertFalse(processed.contains("resp="));
     }
 
     @Test

@@ -1456,8 +1456,9 @@ public class SourcePostProcessor {
                     continue;
                 }
                 pageDataLocals.put(localName, currentElementType);
+                String suffix = pageDataMatcher.group(2).equals(";") ? ";" : " =";
                 pageDataMatcher.appendReplacement(pageDataBuffer, Matcher.quoteReplacement(
-                        "PageData<" + currentElementType + "> " + localName) + pageDataMatcher.group(2));
+                        "PageData<" + currentElementType + "> " + localName + suffix));
             }
             pageDataMatcher.appendTail(pageDataBuffer);
             line = pageDataBuffer.toString();
@@ -1509,8 +1510,9 @@ public class SourcePostProcessor {
                         pageInfoMatcher.appendReplacement(buffer, Matcher.quoteReplacement(pageInfoMatcher.group()));
                         continue;
                     }
+                    String suffix = pageInfoMatcher.group(2).equals(";") ? ";" : " =";
                     pageInfoMatcher.appendReplacement(buffer, Matcher.quoteReplacement(
-                            "PageInfo<" + currentElementType + "> " + localName) + pageInfoMatcher.group(2));
+                            "PageInfo<" + currentElementType + "> " + localName + suffix));
                 }
                 pageInfoMatcher.appendTail(buffer);
                 line = buffer.toString();
