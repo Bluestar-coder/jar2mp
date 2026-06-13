@@ -63,8 +63,10 @@ Reports:
 The source diff report lists reference-only Java files, generated-only Java files,
 shared Java content differences, format-only, import-only, decompiler-artifact, and substantive
 content-diff classification, and original JAR class presence when OTC_ADMIN_REFERENCE_PROJECT is present.
-The summary also includes class bytecode and ZIP metadata fidelity details from
-each artifact-fidelity-summary.csv, plus the decompile parity risk summary,
+The summary also includes restored package artifact fidelity details from
+each artifact-fidelity-summary.csv. These package-level class bytecode and ZIP
+metadata numbers are not a source-recompiled class-byte equivalence signal.
+The summary also includes the decompile parity risk summary,
 HIGH/MEDIUM method index, risk reason breakdown from each decompile-parity-report.md,
 the restoration score bucket breakdown from each restoration-score.md, and
 remaining gap summary plus gate status for build, source coverage, byte package, and runtime observation.
@@ -1220,8 +1222,9 @@ write_source_diff_report \
     "${package_record_runtime_failure_message}" "${package_record_runtime_failure_cause}"
   printf '| byte-exact | %s | %s |\n\n' \
     "${byte_exact_runtime_failure_message}" "${byte_exact_runtime_failure_cause}"
-  printf '## Artifact fidelity details\n\n'
-  printf '| Mode | Content entries match | Same class bytes | Different class bytes | Same nested libs | Different nested libs | Entry order same | ZIP metadata diff entries | Archive bytes same |\n'
+  printf '## Restored package artifact fidelity details\n\n'
+  printf 'These numbers compare the restored Maven package artifact with the original archive. They do not prove source-recompiled class byte equivalence.\n\n'
+  printf '| Mode | Content entries match | Same packaged class bytes | Different packaged class bytes | Same nested libs | Different nested libs | Entry order same | ZIP metadata diff entries | Archive bytes same |\n'
   printf '| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |\n'
   printf '| package-record | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
     "${package_record_content_entries_match}" "${package_record_same_class_bytes}" \

@@ -69,6 +69,8 @@ assert_contains "${script_source}" "Runtime failure summary" "markdown runtime f
 assert_contains "${script_source}" "Remaining gaps" "markdown remaining gaps section"
 assert_contains "${script_source}" "Restoration score breakdown" "markdown restoration score section"
 assert_contains "${script_source}" "Decompile parity risk reasons" "markdown parity reason section"
+assert_contains "${script_source}" "Restored package artifact fidelity details" "markdown restored package artifact section"
+assert_contains "${script_source}" "source-recompiled class byte equivalence" "artifact fidelity scope note"
 
 help_output="$(bash "${SCRIPT}" --help)"
 assert_contains "${help_output}" "OTC_ADMIN_JAR" "sample path env"
@@ -88,7 +90,8 @@ assert_contains "${help_output}" "reference-only Java files" "source diff purpos
 assert_contains "${help_output}" "shared Java content differences" "source content diff purpose"
 assert_contains "${help_output}" "format-only, import-only, decompiler-artifact, and substantive" "source content diff classification purpose"
 assert_contains "${help_output}" "original JAR class presence" "source diff class presence"
-assert_contains "${help_output}" "class bytecode and ZIP metadata fidelity details" "artifact fidelity detail purpose"
+assert_contains "${help_output}" "restored package artifact fidelity details" "artifact fidelity detail purpose"
+assert_contains "${help_output}" "not a source-recompiled class-byte equivalence signal" "artifact fidelity scope help"
 assert_contains "${help_output}" "decompile parity risk summary" "parity risk detail purpose"
 assert_contains "${help_output}" "HIGH/MEDIUM method index" "parity risk method index purpose"
 assert_contains "${help_output}" "risk reason breakdown" "parity risk reason breakdown purpose"
