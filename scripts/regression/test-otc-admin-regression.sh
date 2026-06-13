@@ -97,3 +97,38 @@ assert_contains "${help_output}" "remaining gap summary" "remaining gap summary 
 assert_contains "${help_output}" "gate status for build, source coverage, byte package, and runtime observation" "gate status purpose"
 assert_contains "${help_output}" "failure message and failure cause" "runtime failure summary purpose"
 assert_contains "${help_output}" "source coverage gates" "parity source coverage gates"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
+extract_function() {
+  local function_name="$1"
+  awk "/^${function_name}\\(\\) \\{/,/^}/ { print }" "${SCRIPT}"
+}
+
+eval "$(extract_function normalize_java_file_for_decompiler_artifacts)"
+eval "$(extract_function java_files_equal_after_decompiler_artifact_normalization)"
+
+cat > "${tmp_dir}/reference.java" <<'JAVA'
+class Sample {
+    boolean same(Object o) {
+        Sample other = (Sample)((Object)o);
+        return !((Object)this$id).equals(other$id);
+    }
+}
+JAVA
+
+cat > "${tmp_dir}/generated.java" <<'JAVA'
+class Sample {
+    boolean same(Object o) {
+        Sample other = (Sample)o;
+        return !(this$id).equals(other$id);
+    }
+}
+JAVA
+
+if ! java_files_equal_after_decompiler_artifact_normalization \
+    "${tmp_dir}/reference.java" "${tmp_dir}/generated.java"; then
+  printf 'FAIL decompiler artifact normalization should preserve parenthesized variables while removing casts\n' >&2
+  exit 1
+fi
