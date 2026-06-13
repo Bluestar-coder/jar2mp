@@ -99,6 +99,16 @@ public class SourcePostProcessor {
             "(?m)^(\\s*)ArrayList\\s+([A-Za-z_$][\\w$]*)\\s*;");
     private static final Pattern NO_ARG_CONSTRUCTOR_DECLARATION = Pattern.compile(
             "(?m)^\\s*(?:public|protected|private)?\\s+([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\)\\s*\\{");
+    private static final String DIAMOND_ELIGIBLE_COLLECTION_CONSTRUCTORS =
+            "(?:ArrayDeque|ArrayList|ConcurrentHashMap|ConcurrentSkipListMap|ConcurrentSkipListSet|"
+                    + "CopyOnWriteArrayList|HashMap|HashSet|Hashtable|LinkedHashMap|LinkedHashSet|LinkedList|"
+                    + "PriorityQueue|Stack|TreeMap|TreeSet|Vector)";
+    private static final Pattern RAW_DIAMOND_COLLECTION_CONSTRUCTOR_ASSIGNMENT = Pattern.compile(
+            "(?m)^(\\s*(?:(?:public|protected|private|static|final|transient|volatile)\\s+)*"
+                    + "[A-Za-z_$][\\w$.]*\\s*<[^;=]+>\\s+"
+                    + "[A-Za-z_$][\\w$]*\\s*=\\s*new\\s+)("
+                    + DIAMOND_ELIGIBLE_COLLECTION_CONSTRUCTORS
+                    + ")(\\s*\\([^;\\n{}]*\\))(?!\\s*\\{)");
 
     public static Map<String, Map<String, String>> indexMapstructInputTypes(Map<String, String> sources) {
         if (sources == null || sources.isEmpty()) {
@@ -272,10 +282,22 @@ public class SourcePostProcessor {
         processed = restorePageDataReturnConstructors(processed);
         processed = restoreRoleMenuListTypes(processed);
         processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
+        processed = restoreDiamondConstructorsForTypedCollectionAssignments(processed);
         processed = restoreCheckedExceptionHandlers(processed);
         processed = restoreSwitchBraceSpacing(processed);
         processed = restoreUnindentedMemberMethodDeclarations(processed);
         return processed;
+    }
+
+    private String restoreDiamondConstructorsForTypedCollectionAssignments(String source) {
+        Matcher matcher = RAW_DIAMOND_COLLECTION_CONSTRUCTOR_ASSIGNMENT.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(
+                    matcher.group(1) + matcher.group(2) + "<>" + matcher.group(3)));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
     }
 
     private String removeSyntheticOuterConstructorArguments(String source) {

@@ -345,7 +345,7 @@ class SourcePostProcessorTest {
                         + "    }\n"
                         + "}\n");
 
-        assertTrue(processed.contains("List<Account> accountList = new ArrayList();"));
+        assertTrue(processed.contains("List<Account> accountList = new ArrayList<>();"));
         assertTrue(processed.contains("accountList = this.accountService.list((Wrapper)queryWrapper);"));
         assertFalse(processed.contains("List<Account> accountList = this.accountService.list"));
     }
@@ -677,7 +677,7 @@ class SourcePostProcessorTest {
                         + ".map(BanGroupResDTO::getUid).collect(Collectors.toSet());\n"
                         + "BanDTO needBanData = this.getNeedBanData(banGroup, uids, exclusivePacketUids, groupIds);\n");
 
-        assertTrue(processed.contains("Set<Long> exclusivePacketUids = new HashSet();"));
+        assertTrue(processed.contains("Set<Long> exclusivePacketUids = new HashSet<>();"));
     }
 
     @Test
@@ -839,7 +839,29 @@ class SourcePostProcessorTest {
                         + "if (StrUtil.isNotBlank(uids) && (uidList = Arrays.stream(uids.split(\",\"))"
                         + ".map(Long::parseLong).toList()).size() > 100) {}\n");
 
-        assertTrue(processed.contains("List<Long> uidList = new ArrayList();"));
+        assertTrue(processed.contains("List<Long> uidList = new ArrayList<>();"));
+    }
+
+    @Test
+    void restoresDiamondConstructorsForTypedCollectionAssignments() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    private static Map<String, List<Field>> logFieldCache = new ConcurrentHashMap();\n"
+                        + "    void load() {\n"
+                        + "        List<Account> accountList = new ArrayList();\n"
+                        + "        Set<Long> exclusivePacketUids = new HashSet();\n"
+                        + "        Map<String, Object> typedMap = new HashMap(16);\n"
+                        + "        HashMap rawMap = new HashMap(16);\n"
+                        + "        Map<String, Object> anonymousMap = new HashMap() { };\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("Map<String, List<Field>> logFieldCache = new ConcurrentHashMap<>();"));
+        assertTrue(processed.contains("List<Account> accountList = new ArrayList<>();"));
+        assertTrue(processed.contains("Set<Long> exclusivePacketUids = new HashSet<>();"));
+        assertTrue(processed.contains("Map<String, Object> typedMap = new HashMap<>(16);"));
+        assertTrue(processed.contains("HashMap rawMap = new HashMap(16);"));
+        assertTrue(processed.contains("Map<String, Object> anonymousMap = new HashMap() { };"));
     }
 
     @Test
