@@ -123,6 +123,20 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesWholeClassAnalysisDiagnosticComments() {
+        String processed = new SourcePostProcessor().process(
+                "package demo;\n\n"
+                        + "/*\n"
+                        + " * Exception performing whole class analysis ignored.\n"
+                        + " */\n"
+                        + "public class Sample {\n"
+                        + "}\n");
+
+        assertFalse(processed.contains("Exception performing whole class analysis ignored"));
+        assertTrue(processed.contains("public class Sample"));
+    }
+
+    @Test
     void stripsDecompilerHeader() {
         String processed = new SourcePostProcessor().process(
                 "/*\n"

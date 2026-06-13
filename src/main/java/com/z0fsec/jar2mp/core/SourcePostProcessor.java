@@ -45,7 +45,8 @@ public class SourcePostProcessor {
             "(?m)^(\\s*)void\\s+([A-Za-z_$][\\w$]*)\\s*;");
     private static final Pattern DECOMPILER_DIAGNOSTIC_BLOCK = Pattern.compile(
             "(?ms)^\\s*/\\*\\s*\\R(?:\\s*\\*\\s*(?:WARNING - [^\\n]*|Enabled force condition propagation|"
-                    + "Lifted jumps to return sites|Unable to fully structure code|Loose catch block)\\s*\\R)+"
+                    + "Lifted jumps to return sites|Unable to fully structure code|Loose catch block|"
+                    + "Exception performing whole class analysis ignored\\.)\\s*\\R)+"
                     + "\\s*\\*/\\s*\\R?");
     private static final Pattern DECOMPILER_MONITOR_COMMENT = Pattern.compile(
             "(?m)^\\s*// \\*\\* Monitor(?:Enter|Exit)\\[[^\\n]*\\] \\(shouldn't be in output\\)\\s*\\R?");
