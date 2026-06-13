@@ -273,6 +273,7 @@ public class SourcePostProcessor {
         processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
         processed = restoreCheckedExceptionHandlers(processed);
         processed = restoreSwitchBraceSpacing(processed);
+        processed = restoreUnindentedMemberMethodDeclarations(processed);
         return processed;
     }
 
@@ -522,6 +523,24 @@ public class SourcePostProcessor {
 
     private String restoreSwitchBraceSpacing(String source) {
         return SWITCH_OPENING_BRACE_WITHOUT_SPACE.matcher(source).replaceAll("$1 {");
+    }
+
+    private String restoreUnindentedMemberMethodDeclarations(String source) {
+        String[] lines = source.split("\\n", -1);
+        int braceDepth = 0;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (braceDepth > 0 && !line.startsWith(" ") && !line.startsWith("\t")
+                    && looksLikeMethodDeclaration(line)) {
+                line = "    " + line;
+            }
+            lines[i] = line;
+            braceDepth += countChar(line, '{') - countChar(line, '}');
+            if (braceDepth < 0) {
+                braceDepth = 0;
+            }
+        }
+        return String.join("\n", lines);
     }
 
     private String restoreCfrBrokenBreakMarkers(String source) {
@@ -1658,7 +1677,8 @@ public class SourcePostProcessor {
     }
 
     private boolean looksLikeMethodDeclaration(String line) {
-        return line.matches("\\s*(?:public|protected|private)\\s+[^=;{}]+\\([^;{}]*\\)\\s*\\{?\\s*");
+        return line.matches("\\s*(?:public|protected|private)\\s+[^=;{}]+\\([^;{}]*\\)\\s*"
+                + "(?:throws\\s+[^;{}]+)?\\s*\\{?\\s*");
     }
 
     private boolean isPageDataListMappedByMapstruct(String source, String pageDataName) {

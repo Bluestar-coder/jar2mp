@@ -105,6 +105,24 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresUnindentedMemberMethodDeclarations() {
+        String processed = new SourcePostProcessor().process(
+                "public class Sample {\n"
+                        + "    private static final String VALUE = \"x\";\n"
+                        + "public static <T> T lockAndExecute(String key, Supplier<T> supplier) {\n"
+                        + "        return supplier.get();\n"
+                        + "    }\n"
+                        + "private int sendImageCheckRequest(String url) throws Exception {\n"
+                        + "        return 200;\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("public class Sample {"));
+        assertTrue(processed.contains("    public static <T> T lockAndExecute"));
+        assertTrue(processed.contains("    private int sendImageCheckRequest"));
+    }
+
+    @Test
     void stripsDecompilerHeader() {
         String processed = new SourcePostProcessor().process(
                 "/*\n"
