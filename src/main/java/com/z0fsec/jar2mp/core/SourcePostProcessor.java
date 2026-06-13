@@ -1,8 +1,10 @@
 package com.z0fsec.jar2mp.core;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -282,11 +284,149 @@ public class SourcePostProcessor {
         processed = restorePageDataReturnConstructors(processed);
         processed = restoreRoleMenuListTypes(processed);
         processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
+        processed = restoreRawHashMapTypesFromTypedMethodArguments(processed);
         processed = restoreDiamondConstructorsForTypedCollectionAssignments(processed);
         processed = restoreCheckedExceptionHandlers(processed);
         processed = restoreSwitchBraceSpacing(processed);
         processed = restoreUnindentedMemberMethodDeclarations(processed);
         return processed;
+    }
+
+    private String restoreRawHashMapTypesFromTypedMethodArguments(String source) {
+        Map<String, Map<Integer, String>> mapParameterTypes = collectTypedMapParameterTypes(source);
+        if (mapParameterTypes.isEmpty()) {
+            return source;
+        }
+        String[] lines = source.split("\\n", -1);
+        Pattern rawHashMap = Pattern.compile("^(\\s*)HashMap\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*"
+                + "new\\s+HashMap\\s*\\(([^;\\n]*)\\);");
+        for (int i = 0; i < lines.length; i++) {
+            Matcher matcher = rawHashMap.matcher(lines[i]);
+            if (!matcher.find()) {
+                continue;
+            }
+            String variableName = matcher.group(2);
+            String mapType = findTypedMapArgumentType(lines, i + 1, variableName, mapParameterTypes);
+            if (mapType == null) {
+                continue;
+            }
+            String hashMapType = "HashMap" + mapType.substring(mapType.indexOf('<'));
+            lines[i] = matcher.replaceFirst(Matcher.quoteReplacement(
+                    matcher.group(1) + hashMapType + " " + variableName
+                            + " = new HashMap(" + matcher.group(3) + ");"));
+        }
+        return String.join("\n", lines);
+    }
+
+    private Map<String, Map<Integer, String>> collectTypedMapParameterTypes(String source) {
+        Map<String, Map<Integer, String>> parameterTypes = new LinkedHashMap<>();
+        String[] lines = source.split("\\n", -1);
+        for (String line : lines) {
+            if (!looksLikeMethodDeclaration(line)) {
+                continue;
+            }
+            int openParen = line.indexOf('(');
+            int closeParen = findMatchingParen(line, openParen);
+            if (openParen < 0 || closeParen < 0) {
+                continue;
+            }
+            String beforeParen = line.substring(0, openParen).trim();
+            int methodNameStart = beforeParen.lastIndexOf(' ');
+            if (methodNameStart < 0) {
+                continue;
+            }
+            String methodName = beforeParen.substring(methodNameStart + 1);
+            List<String> parameters = splitTopLevelArguments(line.substring(openParen + 1, closeParen));
+            Map<Integer, String> typedParameters = new LinkedHashMap<>();
+            for (int i = 0; i < parameters.size(); i++) {
+                String parameterType = parameterType(parameters.get(i));
+                if (parameterType != null && rawSimpleTypeName(parameterType).equals("Map")
+                        && parameterType.contains("<")) {
+                    typedParameters.put(i, normalizeGenericType(parameterType));
+                }
+            }
+            if (!typedParameters.isEmpty()) {
+                Map<Integer, String> existingParameters =
+                        parameterTypes.computeIfAbsent(methodName, ignored -> new LinkedHashMap<>());
+                for (Map.Entry<Integer, String> entry : typedParameters.entrySet()) {
+                    existingParameters.putIfAbsent(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        return parameterTypes;
+    }
+
+    private String findTypedMapArgumentType(String[] lines, int start, String variableName,
+                                            Map<String, Map<Integer, String>> mapParameterTypes) {
+        for (int i = start; i < lines.length; i++) {
+            if (i != start && looksLikeMethodDeclaration(lines[i])) {
+                return null;
+            }
+            for (Map.Entry<String, Map<Integer, String>> entry : mapParameterTypes.entrySet()) {
+                String methodName = entry.getKey();
+                int searchIndex = 0;
+                while (true) {
+                    int methodIndex = lines[i].indexOf(methodName + "(", searchIndex);
+                    if (methodIndex < 0) {
+                        methodIndex = lines[i].indexOf("." + methodName + "(", searchIndex);
+                    }
+                    if (methodIndex < 0) {
+                        break;
+                    }
+                    int openParen = lines[i].indexOf('(', methodIndex);
+                    int closeParen = findMatchingParen(lines[i], openParen);
+                    if (closeParen < 0) {
+                        break;
+                    }
+                    List<String> arguments = splitTopLevelArguments(lines[i].substring(openParen + 1, closeParen));
+                    for (Map.Entry<Integer, String> typedParameter : entry.getValue().entrySet()) {
+                        int parameterIndex = typedParameter.getKey();
+                        if (parameterIndex < arguments.size()
+                                && argumentReferencesVariable(arguments.get(parameterIndex), variableName)) {
+                            return typedParameter.getValue();
+                        }
+                    }
+                    searchIndex = closeParen + 1;
+                }
+            }
+        }
+        return null;
+    }
+
+    private String parameterType(String parameter) {
+        String trimmed = parameter.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        trimmed = trimmed.replaceAll("\\bfinal\\s+", "");
+        int split = lastTopLevelWhitespace(trimmed);
+        return split < 0 ? null : normalizeGenericType(trimmed.substring(0, split));
+    }
+
+    private int lastTopLevelWhitespace(String text) {
+        int angleDepth = 0;
+        int lastWhitespace = -1;
+        for (int i = 0; i < text.length(); i++) {
+            char current = text.charAt(i);
+            if (current == '<') {
+                angleDepth++;
+            } else if (current == '>' && angleDepth > 0) {
+                angleDepth--;
+            } else if (Character.isWhitespace(current) && angleDepth == 0) {
+                lastWhitespace = i;
+            }
+        }
+        return lastWhitespace;
+    }
+
+    private boolean argumentReferencesVariable(String argument, String variableName) {
+        String trimmed = argument.trim();
+        Matcher castMatcher = Pattern.compile("^(?:\\([A-Za-z_$][\\w$]*(?:\\s*<[^)]*>\\s*)?\\)\\s*)+(.+)$")
+                .matcher(trimmed);
+        if (castMatcher.find()) {
+            trimmed = castMatcher.group(1).trim();
+        }
+        return trimmed.equals(variableName);
     }
 
     private String restoreDiamondConstructorsForTypedCollectionAssignments(String source) {
@@ -1409,10 +1549,14 @@ public class SourcePostProcessor {
     }
 
     private int countTopLevelArguments(String arguments) {
+        return splitTopLevelArguments(arguments).size();
+    }
+
+    private List<String> splitTopLevelArguments(String arguments) {
+        List<String> result = new ArrayList<>();
         if (arguments == null || arguments.trim().isEmpty()) {
-            return 0;
+            return result;
         }
-        int count = 1;
         int parenDepth = 0;
         int bracketDepth = 0;
         int braceDepth = 0;
@@ -1420,6 +1564,7 @@ public class SourcePostProcessor {
         boolean inString = false;
         boolean inChar = false;
         boolean escaping = false;
+        int argumentStart = 0;
         for (int i = 0; i < arguments.length(); i++) {
             char current = arguments.charAt(i);
             if (inString) {
@@ -1464,10 +1609,12 @@ public class SourcePostProcessor {
                 angleDepth--;
             } else if (current == ',' && parenDepth == 0 && bracketDepth == 0
                     && braceDepth == 0 && angleDepth == 0) {
-                count++;
+                result.add(arguments.substring(argumentStart, i).trim());
+                argumentStart = i + 1;
             }
         }
-        return count;
+        result.add(arguments.substring(argumentStart).trim());
+        return result;
     }
 
     private String restoreRoleMenuListTypes(String source) {

@@ -1069,6 +1069,36 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresRawHashMapTypeFromTypedMethodArgument() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    private static void parse(Object record, Map<String, Object> colValMap, Field field) {\n"
+                        + "    }\n"
+                        + "    private static void parse(Object record, Object fieldValue, Map<String, Object> colValMap,"
+                        + " Field field) {\n"
+                        + "    }\n"
+                        + "    private static void nested(Object value, Map<String, HashMap<String, Object>> valueMap) {\n"
+                        + "    }\n"
+                        + "    void run(Object record, Field field, Object item) {\n"
+                        + "        HashMap oldValMap = new HashMap(16);\n"
+                        + "        parse(record, oldValMap, (Field)field);\n"
+                        + "        HashMap fieldMap = new HashMap(16);\n"
+                        + "        parse(record, item, fieldMap, (Field)field);\n"
+                        + "        HashMap fieldListValMap = new HashMap(16);\n"
+                        + "        nested(item, fieldListValMap);\n"
+                        + "        HashMap rawMap = new HashMap(16);\n"
+                        + "        unknown(rawMap);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("HashMap<String, Object> oldValMap = new HashMap<>(16);"));
+        assertTrue(processed.contains("HashMap<String, Object> fieldMap = new HashMap<>(16);"));
+        assertTrue(processed.contains(
+                "HashMap<String, HashMap<String, Object>> fieldListValMap = new HashMap<>(16);"));
+        assertTrue(processed.contains("HashMap rawMap = new HashMap(16);"));
+    }
+
+    @Test
     void restoresMapEntryEnhancedForTypeFromKeyAndValueAssignments() {
         String processed = new SourcePostProcessor().process(
                 "for (Map.Entry orderEntry : toBeRefundOrderMap.entrySet()) {\n"
