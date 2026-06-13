@@ -410,6 +410,32 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresPageDataReturnConstructorSyntax() {
+        String processed = new SourcePostProcessor().process(
+                "public PageData<DeviceBlacklistDTO> queryByPage(QueryRequest req) {\n"
+                        + "    PageInfo<DeviceBlacklistDTO> resp = this.api.query(req);\n"
+                        + "    return new PageData(resp.getRowList(), resp.getTotal().longValue(), "
+                        + "(long)resp.getPageNum().intValue(), (long)resp.getPageSize().intValue());\n"
+                        + "}\n"
+                        + "public PageData<DeviceBlacklistDTO> querySummary(QueryRequest req) {\n"
+                        + "    PageInfo<DeviceBlacklistDTO> resp = this.api.query(req);\n"
+                        + "    return new PageData(resp.getRowList(), resp.getTotal().longValue(), "
+                        + "(long)resp.getPageNum().intValue(), (long)resp.getPageSize().intValue(), "
+                        + "(long)resp.getPages(), resp.getSummary());\n"
+                        + "}\n"
+                        + "public Object rawPage(QueryRequest req) {\n"
+                        + "    return new PageData(resp.getRowList(), (long)resp.getPageNum().intValue());\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("return new PageData<>(resp.getRowList(), resp.getTotal().longValue(), "
+                + "resp.getPageNum().intValue(), resp.getPageSize().intValue());"));
+        assertTrue(processed.contains("return new PageData(resp.getRowList(), resp.getTotal().longValue(), "
+                + "resp.getPageNum().intValue(), resp.getPageSize().intValue(), "
+                + "resp.getPages(), resp.getSummary());"));
+        assertTrue(processed.contains("return new PageData(resp.getRowList(), (long)resp.getPageNum().intValue());"));
+    }
+
+    @Test
     void scopesPageInfoElementTypesForRepeatedLocalNames() {
         String processed = new SourcePostProcessor().process(
                 "public PageData<BuyOrderPageResp> buyPage() {\n"

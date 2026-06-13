@@ -261,6 +261,7 @@ public class SourcePostProcessor {
         processed = restoreNoticeContentListFormatterTypes(processed, className);
         processed = restoreBooleanHandleResultTernaries(processed);
         processed = restorePageDataGetListLocalTypes(processed);
+        processed = restorePageDataReturnConstructors(processed);
         processed = restoreRoleMenuListTypes(processed);
         processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
         processed = restoreCheckedExceptionHandlers(processed);
@@ -1251,6 +1252,117 @@ public class SourcePostProcessor {
             }
         }
         return String.join("\n", lines);
+    }
+
+    private String restorePageDataReturnConstructors(String source) {
+        String[] lines = source.split("\\n", -1);
+        boolean inPageDataMethod = false;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (PAGE_DATA_METHOD_DECLARATION.matcher(line).find()) {
+                inPageDataMethod = true;
+            } else if (looksLikeMethodDeclaration(line)) {
+                inPageDataMethod = false;
+            }
+            if (inPageDataMethod && line.contains("new PageData(")) {
+                line = line.replaceAll("\\(long\\)\\s*([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*\\([^()]*\\))*"
+                        + "\\.(?:intValue|getPages)\\(\\))", "$1");
+                line = restorePageDataConstructorDiamond(line);
+                lines[i] = line;
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    private String restorePageDataConstructorDiamond(String line) {
+        StringBuilder builder = new StringBuilder(line.length() + 8);
+        int searchIndex = 0;
+        while (true) {
+            int constructorIndex = line.indexOf("new PageData(", searchIndex);
+            if (constructorIndex < 0) {
+                builder.append(line, searchIndex, line.length());
+                return builder.toString();
+            }
+
+            int openParen = constructorIndex + "new PageData".length();
+            int closeParen = findMatchingParen(line, openParen);
+            if (closeParen < 0) {
+                builder.append(line, searchIndex, constructorIndex + 1);
+                searchIndex = constructorIndex + 1;
+                continue;
+            }
+
+            String arguments = line.substring(openParen + 1, closeParen);
+            builder.append(line, searchIndex, constructorIndex);
+            if (countTopLevelArguments(arguments) <= 5) {
+                builder.append("new PageData<>(").append(arguments).append(')');
+            } else {
+                builder.append(line, constructorIndex, closeParen + 1);
+            }
+            searchIndex = closeParen + 1;
+        }
+    }
+
+    private int countTopLevelArguments(String arguments) {
+        if (arguments == null || arguments.trim().isEmpty()) {
+            return 0;
+        }
+        int count = 1;
+        int parenDepth = 0;
+        int bracketDepth = 0;
+        int braceDepth = 0;
+        int angleDepth = 0;
+        boolean inString = false;
+        boolean inChar = false;
+        boolean escaping = false;
+        for (int i = 0; i < arguments.length(); i++) {
+            char current = arguments.charAt(i);
+            if (inString) {
+                if (escaping) {
+                    escaping = false;
+                } else if (current == '\\') {
+                    escaping = true;
+                } else if (current == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inChar) {
+                if (escaping) {
+                    escaping = false;
+                } else if (current == '\\') {
+                    escaping = true;
+                } else if (current == '\'') {
+                    inChar = false;
+                }
+                continue;
+            }
+            if (current == '"') {
+                inString = true;
+            } else if (current == '\'') {
+                inChar = true;
+            } else if (current == '(') {
+                parenDepth++;
+            } else if (current == ')' && parenDepth > 0) {
+                parenDepth--;
+            } else if (current == '[') {
+                bracketDepth++;
+            } else if (current == ']' && bracketDepth > 0) {
+                bracketDepth--;
+            } else if (current == '{') {
+                braceDepth++;
+            } else if (current == '}' && braceDepth > 0) {
+                braceDepth--;
+            } else if (current == '<') {
+                angleDepth++;
+            } else if (current == '>' && angleDepth > 0) {
+                angleDepth--;
+            } else if (current == ',' && parenDepth == 0 && bracketDepth == 0
+                    && braceDepth == 0 && angleDepth == 0) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private String restoreRoleMenuListTypes(String source) {
