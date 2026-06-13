@@ -68,6 +68,8 @@ public class SourcePostProcessor {
                     + "LambdaMetafactory\\.(?:altMetafactory|metafactory)\\([^\\n]*?"
                     + "\\b([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\)\\s*,\\s*\\(L([^;\\n)]+);\\)"
                     + "[^\\n]*?\\)\\s*\\(\\s*\\)");
+    private static final Pattern SIMPLE_THIS_METHOD_REFERENCE_LAMBDA = Pattern.compile(
+            "\\.map\\(\\s*([A-Za-z_$][\\w$]*)\\s*->\\s*this\\.([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\1\\s*\\)\\s*\\)");
     private static final Pattern PAGE_INFO_ROW_LIST_METHOD_REFERENCE = Pattern.compile(
             "\\b([A-Za-z_$][\\w$]*)\\.getRowList\\(\\)\\.stream\\(\\)\\.map\\(\\s*"
                     + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::");
@@ -171,6 +173,7 @@ public class SourcePostProcessor {
         processed = removeDecompilerDiagnosticComments(processed);
         processed = restorePrintableUnicodeEscapes(processed);
         processed = restoreCfrLambdaMetafactoryMethodReferences(processed);
+        processed = restoreSimpleThisMethodReferenceLambdas(processed);
         processed = removeRedundantImports(processed, className);
         processed = processed.replace("(Object)", "");
         processed = removeCollectionUtilityCasts(processed);
@@ -498,6 +501,16 @@ public class SourcePostProcessor {
                 continue;
             }
             matcher.appendReplacement(buffer, Matcher.quoteReplacement(ownerType + "::" + methodName));
+        }
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    private String restoreSimpleThisMethodReferenceLambdas(String source) {
+        Matcher matcher = SIMPLE_THIS_METHOD_REFERENCE_LAMBDA.matcher(source);
+        StringBuffer buffer = new StringBuffer();
+        while (matcher.find()) {
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(".map(this::" + matcher.group(2) + ")"));
         }
         matcher.appendTail(buffer);
         return buffer.toString();

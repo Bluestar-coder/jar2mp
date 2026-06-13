@@ -1703,6 +1703,20 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresSimpleThisMethodReferenceLambdas() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void load(PageInfo<DeviceResp> pageInfo) {\n"
+                        + "        pageInfo.getRowList().stream().map(arg_0 -> this.toDTO(arg_0)).toList();\n"
+                        + "        pageInfo.getRowList().stream().map(arg_1 -> this.toDTO((DeviceResp)arg_1)).toList();\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains(".map(this::toDTO).toList()"));
+        assertTrue(processed.contains(".map(arg_1 -> this.toDTO((DeviceResp)arg_1)).toList()"));
+    }
+
+    @Test
     void restoresPairListTypeFromTimeSplitterAssignment() {
         String processed = new SourcePostProcessor().process(
                 "List<Pair> timeSegments = TimeSplitter.splitTimeRange(startDateTime, endDateTime);\n"
