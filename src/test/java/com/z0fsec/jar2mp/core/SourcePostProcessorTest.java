@@ -83,6 +83,28 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresSwitchBraceSpacing() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    void convert(String value) {\n"
+                        + "        switch (Status.byName((String)value)){\n"
+                        + "            case WAIT: return;\n"
+                        + "        }\n"
+                        + "        String literal = \"switch (x){\";\n"
+                        + "    }\n"
+                        + "    int type(Mode mode) {\n"
+                        + "        return switch (mode){\n"
+                        + "            case A -> 1;\n"
+                        + "        };\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("switch (Status.byName((String)value)) {"));
+        assertTrue(processed.contains("return switch (mode) {"));
+        assertTrue(processed.contains("String literal = \"switch (x){\";"));
+    }
+
+    @Test
     void stripsDecompilerHeader() {
         String processed = new SourcePostProcessor().process(
                 "/*\n"

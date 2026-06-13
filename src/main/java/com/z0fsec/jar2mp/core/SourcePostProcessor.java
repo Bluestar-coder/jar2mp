@@ -57,6 +57,8 @@ public class SourcePostProcessor {
             "switch\\s*\\(\\s*1\\.(\\$SwitchMap\\$[A-Za-z0-9_$]+)\\[([\\s\\S]+?)\\.ordinal\\(\\)\\]\\s*\\)");
     private static final Pattern SYNTHETIC_ENUM_SWITCH_CASE = Pattern.compile(
             "(\\bcase\\s+)(\\d+)(\\s*(?::|->))");
+    private static final Pattern SWITCH_OPENING_BRACE_WITHOUT_SPACE = Pattern.compile(
+            "(?m)^(\\s*(?:return\\s+)?switch\\s*\\([^\\n{]*\\))\\{");
     private static final Pattern METHOD_REFERENCE_TYPE = Pattern.compile(
             "\\b([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::[A-Za-z_$][\\w$]*");
     private static final Pattern LAMBDA_QUERY_WRAPPER_DECLARATION = Pattern.compile(
@@ -172,6 +174,7 @@ public class SourcePostProcessor {
         String processed = stripDecompilerHeader(source);
         processed = removeDecompilerDiagnosticComments(processed);
         processed = restorePrintableUnicodeEscapes(processed);
+        processed = restoreSwitchBraceSpacing(processed);
         processed = restoreCfrLambdaMetafactoryMethodReferences(processed);
         processed = restoreSimpleThisMethodReferenceLambdas(processed);
         processed = removeRedundantImports(processed, className);
@@ -269,6 +272,7 @@ public class SourcePostProcessor {
         processed = restoreRoleMenuListTypes(processed);
         processed = alignStreamMethodReferenceOwnersWithListElementTypes(processed);
         processed = restoreCheckedExceptionHandlers(processed);
+        processed = restoreSwitchBraceSpacing(processed);
         return processed;
     }
 
@@ -514,6 +518,10 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private String restoreSwitchBraceSpacing(String source) {
+        return SWITCH_OPENING_BRACE_WITHOUT_SPACE.matcher(source).replaceAll("$1 {");
     }
 
     private String restoreCfrBrokenBreakMarkers(String source) {
