@@ -53,6 +53,25 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void restoresKnownGlobalConstantStringLiterals() {
+        String processed = new SourcePostProcessor().process(
+                "package com.otc.admin.biz;\n\n"
+                        + "import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;\n\n"
+                        + "class Sample {\n"
+                        + "    void run(LambdaQueryWrapper<User> wrapper, RedisTemplate userTemplate, Long uid) {\n"
+                        + "        wrapper.last(\"limit 1\");\n"
+                        + "        userTemplate.delete(String.format(\"user:info:%d\", uid));\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("import com.otc.admin.domain.constant.GlobalConstant;"));
+        assertTrue(processed.contains("wrapper.last(GlobalConstant.LIMIT_ONE);"));
+        assertTrue(processed.contains("String.format(GlobalConstant.USER_INFO, uid)"));
+        assertFalse(processed.contains("\"limit 1\""));
+        assertFalse(processed.contains("\"user:info:%d\""));
+    }
+
+    @Test
     void restoresPrintableUnicodeEscapesInsideLiterals() {
         String processed = new SourcePostProcessor().process(
                 "log.info(\"" + "\\u8bf7" + "\\u6c42" + "\\u6765" + "\\u6e90" + "[{}]\");\n"

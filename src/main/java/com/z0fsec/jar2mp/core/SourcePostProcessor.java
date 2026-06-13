@@ -175,6 +175,7 @@ public class SourcePostProcessor {
         processed = processed.replace("(Object)", "");
         processed = removeCollectionUtilityCasts(processed);
         processed = restoreLettuceTimeoutAutounboxing(processed);
+        processed = restoreKnownGlobalConstantStringLiterals(processed);
         processed = restoreCfrBrokenBreakMarkers(processed);
         processed = removeParameterArrayCasts(processed);
         processed = restoreStringLocalsFromToStringAssignments(processed);
@@ -2492,6 +2493,16 @@ public class SourcePostProcessor {
     private String restoreLettuceTimeoutAutounboxing(String source) {
         return source.replaceAll("(lettuceConnectionFactory\\([^;\\n]*?,\\s*)([A-Za-z_$][\\w$]*)\\.longValue\\(\\)",
                 "$1$2");
+    }
+
+    private String restoreKnownGlobalConstantStringLiterals(String source) {
+        String processed = source.replaceAll("\\.last\\(\\s*\"limit 1\"\\s*\\)", ".last(GlobalConstant.LIMIT_ONE)");
+        processed = processed.replaceAll("String\\.format\\(\\s*\"user:info:%d\"\\s*,",
+                "String.format(GlobalConstant.USER_INFO,");
+        if (!processed.equals(source)) {
+            processed = ensureImport(processed, "com.otc.admin.domain.constant.GlobalConstant");
+        }
+        return processed;
     }
 
     private String unwrapSFunctionArraySelects(String source) {
