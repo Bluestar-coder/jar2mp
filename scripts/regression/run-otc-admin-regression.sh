@@ -456,20 +456,23 @@ gap_category_summary() {
   local rows
   rows="$(
     awk -F '|' '
-      /^\| Category \| Impact \| Detail \|/ {
+      {
+        header = $2
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", header)
+      }
+      header == "Category" {
         in_gap_table = 1
         next
       }
-      in_gap_table && /^\| ---/ {
+      in_gap_table && header == "---" {
         next
       }
-      in_gap_table && $0 ~ /^\|/ {
+      in_gap_table && substr($0, 1, 1) == "|" {
         category = $2
         impact = $3
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", category)
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", impact)
-        if (category != "" && category != "Category" && category != "---"
-            && category != "(none)" && impact + 0 > 0) {
+        if (category != "" && category != "Category" && category != "---" && category != "(none)" && impact + 0 > 0) {
           printf "%s\t%s\n", category, impact
         }
         next
@@ -502,14 +505,18 @@ observation_category_summary() {
   local rows
   rows="$(
     awk -F '|' '
-      /^\| Observation \| Impact \| Detail \|/ {
+      {
+        header = $2
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", header)
+      }
+      header == "Observation" {
         in_observation_table = 1
         next
       }
-      in_observation_table && /^\| ---/ {
+      in_observation_table && header == "---" {
         next
       }
-      in_observation_table && $0 ~ /^\|/ {
+      in_observation_table && substr($0, 1, 1) == "|" {
         category = $2
         impact = $3
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", category)
@@ -1583,6 +1590,7 @@ write_source_rebuild_class_byte_report "${SOURCE_REBUILD_BYTECODE_REPORT}"
     "${byte_exact_different_nested_libs}" "${byte_exact_archive_entry_order_same}" \
     "${byte_exact_archive_metadata_diff_entries}" "${byte_exact_archive_bytes_same}"
   printf '## Decompile parity risk\n\n'
+  printf 'Advisory source-review signals only; when build, source coverage, byte package, and source-recompiled class-byte gates pass, these counts are not remaining restoration gaps.\n\n'
   printf '| Mode | Classes | Methods | Parse failures | Missing source methods | Reflection methods | Invokedynamic methods | Missing required LVT names | HIGH | MEDIUM | LOW |\n'
   printf '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n'
   printf '| package-record | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \

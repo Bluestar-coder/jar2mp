@@ -79,6 +79,7 @@ assert_contains "${script_source}" "Remaining restoration gaps" "markdown remain
 assert_contains "${script_source}" "Non-penalizing observations" "markdown observations section"
 assert_contains "${script_source}" "Restoration score breakdown" "markdown restoration score section"
 assert_contains "${script_source}" "Decompile parity risk reasons" "markdown parity reason section"
+assert_contains "${script_source}" "Advisory source-review signals" "markdown parity advisory scope note"
 assert_contains "${script_source}" "Restored package artifact fidelity details" "markdown restored package artifact section"
 assert_contains "${script_source}" "source-recompiled class byte equivalence" "artifact fidelity scope note"
 assert_contains "${script_source}" "Source rebuild class bytecode fidelity" "markdown source rebuild fidelity section"
@@ -129,6 +130,27 @@ extract_function() {
   local function_name="$1"
   awk "/^${function_name}\\(\\) \\{/,/^}/ { print }" "${SCRIPT}"
 }
+
+eval "$(extract_function gap_category_summary)"
+
+cat > "${tmp_dir}/gap-summary.md" <<'MD'
+# Gap summary
+
+- Gap count: 2
+
+## Remaining restoration gaps
+
+| Category | Impact | Detail |
+| --- | --- | --- |
+| socket | 10 | No runtime evidence recorded for statically detected socket usage. |
+| runtime_status | 4 | Runtime trace timed out after collecting events; clean exit and health are not verified. |
+MD
+
+gap_categories="$(gap_category_summary "${tmp_dir}/gap-summary.md" "missing")"
+if [[ "${gap_categories}" != "socket=10; runtime_status=4" ]]; then
+  printf 'FAIL gap category parser: expected socket=10; runtime_status=4, got %s\n' "${gap_categories}" >&2
+  exit 1
+fi
 
 eval "$(extract_function normalize_java_file_for_decompiler_artifacts)"
 eval "$(extract_function java_files_equal_after_decompiler_artifact_normalization)"
