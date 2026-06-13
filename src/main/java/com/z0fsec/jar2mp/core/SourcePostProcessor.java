@@ -71,7 +71,7 @@ public class SourcePostProcessor {
                     + "\\b([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\)\\s*,\\s*\\(L([^;\\n)]+);\\)"
                     + "[^\\n]*?\\)\\s*\\(\\s*\\)");
     private static final Pattern SIMPLE_THIS_METHOD_REFERENCE_LAMBDA = Pattern.compile(
-            "\\.map\\(\\s*([A-Za-z_$][\\w$]*)\\s*->\\s*this\\.([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\1\\s*\\)\\s*\\)");
+            "\\.(map|filter)\\(\\s*([A-Za-z_$][\\w$]*)\\s*->\\s*this\\.([A-Za-z_$][\\w$]*)\\s*\\(\\s*\\2\\s*\\)\\s*\\)");
     private static final Pattern PAGE_INFO_ROW_LIST_METHOD_REFERENCE = Pattern.compile(
             "\\b([A-Za-z_$][\\w$]*)\\.getRowList\\(\\)\\.stream\\(\\)\\.map\\(\\s*"
                     + "([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][\\w$]*)*)::");
@@ -514,7 +514,7 @@ public class SourcePostProcessor {
         Matcher matcher = SIMPLE_THIS_METHOD_REFERENCE_LAMBDA.matcher(source);
         StringBuffer buffer = new StringBuffer();
         while (matcher.find()) {
-            matcher.appendReplacement(buffer, Matcher.quoteReplacement(".map(this::" + matcher.group(2) + ")"));
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement("." + matcher.group(1) + "(this::" + matcher.group(3) + ")"));
         }
         matcher.appendTail(buffer);
         return buffer.toString();

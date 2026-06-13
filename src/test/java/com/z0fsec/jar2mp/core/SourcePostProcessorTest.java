@@ -1730,11 +1730,13 @@ class SourcePostProcessorTest {
                 "class Sample {\n"
                         + "    void load(PageInfo<DeviceResp> pageInfo) {\n"
                         + "        pageInfo.getRowList().stream().map(arg_0 -> this.toDTO(arg_0)).toList();\n"
+                        + "        pageInfo.getRowList().stream().filter(arg_0 -> this.getClearTimeBool(arg_0)).toList();\n"
                         + "        pageInfo.getRowList().stream().map(arg_1 -> this.toDTO((DeviceResp)arg_1)).toList();\n"
                         + "    }\n"
                         + "}\n");
 
         assertTrue(processed.contains(".map(this::toDTO).toList()"));
+        assertTrue(processed.contains(".filter(this::getClearTimeBool).toList()"));
         assertTrue(processed.contains(".map(arg_1 -> this.toDTO((DeviceResp)arg_1)).toList()"));
     }
 
