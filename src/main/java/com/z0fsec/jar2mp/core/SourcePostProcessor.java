@@ -421,13 +421,16 @@ public class SourcePostProcessor {
     private String removeRedundantKnownVariableCasts(String source) {
         String[] lines = source.split("\\n", -1);
         Map<String, String> localTypes = new LinkedHashMap<>();
+        Set<String> catchParameters = new LinkedHashSet<>();
         int methodDepth = 0;
         Pattern typedLocal = Pattern.compile("^\\s*(?:final\\s+)?([A-Za-z_$][\\w$.]*"
                 + "(?:\\s*<[^;=]+>)?(?:\\s*\\[\\])?)\\s+([A-Za-z_$][\\w$]*)\\s*(?:=|;)");
+        Pattern catchParameter = Pattern.compile("\\bcatch\\s*\\(\\s*([A-Za-z_$][\\w$.]*)\\s+([A-Za-z_$][\\w$]*)\\s*\\)");
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i];
             if (looksLikeMethodDeclaration(line)) {
                 localTypes.clear();
+                catchParameters.clear();
                 localTypes.putAll(methodParameterTypes(line));
                 methodDepth = Math.max(1, braceDelta(line));
                 continue;
@@ -435,27 +438,36 @@ public class SourcePostProcessor {
             if (methodDepth <= 0) {
                 continue;
             }
-            lines[i] = removeRedundantKnownVariableCastsFromLine(line, localTypes);
+            Matcher catchMatcher = catchParameter.matcher(line);
+            if (catchMatcher.find()) {
+                localTypes.put(catchMatcher.group(2), normalizeGenericType(catchMatcher.group(1)));
+                catchParameters.add(catchMatcher.group(2));
+            }
+            lines[i] = removeRedundantKnownVariableCastsFromLine(line, localTypes, catchParameters);
             Matcher localMatcher = typedLocal.matcher(lines[i]);
             if (localMatcher.find()) {
                 localTypes.put(localMatcher.group(2), normalizeGenericType(localMatcher.group(1)));
+                catchParameters.remove(localMatcher.group(2));
             }
             methodDepth += braceDelta(line);
             if (methodDepth <= 0) {
                 localTypes.clear();
+                catchParameters.clear();
             }
         }
         return String.join("\n", lines);
     }
 
-    private String removeRedundantKnownVariableCastsFromLine(String line, Map<String, String> localTypes) {
+    private String removeRedundantKnownVariableCastsFromLine(String line, Map<String, String> localTypes,
+                                                            Set<String> catchParameters) {
         Matcher matcher = Pattern.compile("\\(([A-Za-z_$][\\w$.]*(?:\\s*<[^)]*>\\s*)?(?:\\s*\\[\\])?)\\)\\s*"
                 + "([A-Za-z_$][\\w$]*)\\b").matcher(line);
         StringBuffer buffer = new StringBuffer();
         while (matcher.find()) {
             String castType = normalizeGenericType(matcher.group(1));
             String knownType = localTypes.get(matcher.group(2));
-            if (knownType != null && castMatchesKnownType(castType, knownType)) {
+            if (knownType != null && (castMatchesKnownType(castType, knownType)
+                    || isThrowableCastOfCatchParameter(castType, matcher.group(2), catchParameters))) {
                 matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group(2)));
             } else {
                 matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group(0)));
@@ -463,6 +475,10 @@ public class SourcePostProcessor {
         }
         matcher.appendTail(buffer);
         return buffer.toString();
+    }
+
+    private boolean isThrowableCastOfCatchParameter(String castType, String variableName, Set<String> catchParameters) {
+        return catchParameters.contains(variableName) && "Throwable".equals(rawSimpleTypeName(castType));
     }
 
     private boolean castMatchesKnownType(String castType, String knownType) {
