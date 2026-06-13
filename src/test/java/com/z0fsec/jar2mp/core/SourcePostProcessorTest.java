@@ -77,6 +77,37 @@ class SourcePostProcessorTest {
     }
 
     @Test
+    void removesRedundantThrowableCastsFromInitializerCatchParameters() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    static {\n"
+                        + "        try {\n"
+                        + "            work();\n"
+                        + "        } catch (Exception e) {\n"
+                        + "            log.error(\"Failed\", (Throwable)e);\n"
+                        + "        }\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("log.error(\"Failed\", e);"));
+        assertFalse(processed.contains("(Throwable)e"));
+    }
+
+    @Test
+    void removesRedundantThrowableCastsFromKnownExceptionParameters() {
+        String processed = new SourcePostProcessor().process(
+                "class Sample {\n"
+                        + "    private void handle(Exception e, Object raw) {\n"
+                        + "        log.error(\"Failed {}\", (Throwable)e);\n"
+                        + "        log.error(\"Raw {}\", (Throwable)raw);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        assertTrue(processed.contains("log.error(\"Failed {}\", e);"));
+        assertTrue(processed.contains("log.error(\"Raw {}\", (Throwable)raw);"));
+    }
+
+    @Test
     void bridgesTypedListArgumentsForRocketMqBatchSyncSend() {
         String processed = new SourcePostProcessor().process(
                 "package demo;\n\n"

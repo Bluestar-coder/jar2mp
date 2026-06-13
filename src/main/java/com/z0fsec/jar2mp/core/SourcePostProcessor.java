@@ -435,6 +435,12 @@ public class SourcePostProcessor {
                 methodDepth = Math.max(1, braceDelta(line));
                 continue;
             }
+            if (methodDepth <= 0 && looksLikeInitializerDeclaration(line)) {
+                localTypes.clear();
+                catchParameters.clear();
+                methodDepth = Math.max(1, braceDelta(line));
+                continue;
+            }
             if (methodDepth <= 0) {
                 continue;
             }
@@ -485,7 +491,22 @@ public class SourcePostProcessor {
         if (castType.contains("<")) {
             return false;
         }
-        return rawSimpleTypeName(castType).equals(rawSimpleTypeName(knownType));
+        String castSimpleType = rawSimpleTypeName(castType);
+        String knownSimpleType = rawSimpleTypeName(knownType);
+        if ("Throwable".equals(castSimpleType) && isKnownThrowableType(knownSimpleType)) {
+            return true;
+        }
+        return castSimpleType.equals(knownSimpleType);
+    }
+
+    private boolean isKnownThrowableType(String simpleTypeName) {
+        return "Throwable".equals(simpleTypeName)
+                || "Exception".equals(simpleTypeName)
+                || "RuntimeException".equals(simpleTypeName);
+    }
+
+    private boolean looksLikeInitializerDeclaration(String line) {
+        return "static {".equals(line.trim());
     }
 
     private int braceDelta(String line) {
