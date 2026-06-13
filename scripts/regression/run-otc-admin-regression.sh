@@ -1092,6 +1092,7 @@ run_restore_mode() {
   local gap_summary="${project_dir}/gap-summary.md"
   local runtime_report="${project_dir}/runtime-trace-report.md"
   local fidelity_summary="${project_dir}/target/${check_dir}/artifact-fidelity-summary.csv"
+  local source_rebuild_summary="${project_dir}/source-rebuild-fidelity-summary.csv"
   local parity_report="${project_dir}/decompile-parity-report.md"
   local decompile_failures="${project_dir}/decompile-failures.md"
   local artifact_path
@@ -1129,6 +1130,15 @@ run_restore_mode() {
   set_var "${prefix}_archive_bytes_same" "$(csv_column_by_name "${fidelity_summary}" "archive_bytes_same" "missing")"
   set_var "${prefix}_original_sha256" "$(csv_column_by_name "${fidelity_summary}" "original_archive_sha256" "missing")"
   set_var "${prefix}_rebuilt_sha256" "$(csv_column_by_name "${fidelity_summary}" "rebuilt_archive_sha256" "missing")"
+  set_var "${prefix}_source_rebuild_report_same" "$(csv_column_by_name "${source_rebuild_summary}" "source_recompiled_class_bytes_same" "missing")"
+  set_var "${prefix}_source_rebuild_report_original_classes" "$(csv_column_by_name "${source_rebuild_summary}" "original_app_classes" "missing")"
+  set_var "${prefix}_source_rebuild_report_classes" "$(csv_column_by_name "${source_rebuild_summary}" "recompiled_classes" "missing")"
+  set_var "${prefix}_source_rebuild_report_common_classes" "$(csv_column_by_name "${source_rebuild_summary}" "common_classes" "missing")"
+  set_var "${prefix}_source_rebuild_report_same_class_bytes" "$(csv_column_by_name "${source_rebuild_summary}" "same_class_bytes" "missing")"
+  set_var "${prefix}_source_rebuild_report_different_class_bytes" "$(csv_column_by_name "${source_rebuild_summary}" "different_class_bytes" "missing")"
+  set_var "${prefix}_source_rebuild_report_missing_classes" "$(csv_column_by_name "${source_rebuild_summary}" "missing_recompiled_classes" "missing")"
+  set_var "${prefix}_source_rebuild_report_extra_classes" "$(csv_column_by_name "${source_rebuild_summary}" "extra_recompiled_classes" "missing")"
+  set_var "${prefix}_source_rebuild_report_compile_fallback_classes" "$(csv_column_by_name "${source_rebuild_summary}" "compile_fallback_classes" "missing")"
   set_var "${prefix}_parity_classes_scanned" "$(parity_summary_field "${parity_report}" "Classes scanned" "missing")"
   set_var "${prefix}_parity_methods_scanned" "$(parity_summary_field "${parity_report}" "Methods scanned" "missing")"
   set_var "${prefix}_parity_parse_failures" "$(parity_summary_field "${parity_report}" "Class parse failures" "missing")"
@@ -1374,24 +1384,28 @@ write_source_rebuild_class_byte_report "${SOURCE_REBUILD_BYTECODE_REPORT}"
     "${byte_exact_verification_score}"
   printf '## Source rebuild class bytecode fidelity\n\n'
   printf 'These numbers compare `target/classes` compiled from generated sources with application class entries from the original JAR. They are stricter than restored package artifact fidelity.\n\n'
-  printf '| Mode | Original app classes | Recompiled classes | Common | Same class bytes | Different class bytes | Missing recompiled classes | Extra recompiled classes |\n'
-  printf '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n'
-  printf '| package-record | %s | %s | %s | %s | %s | %s | %s |\n' \
-    "${package_record_source_rebuild_original_classes}" \
-    "${package_record_source_rebuild_classes}" \
-    "${package_record_source_rebuild_common_classes}" \
-    "${package_record_source_rebuild_same_class_bytes}" \
-    "${package_record_source_rebuild_different_class_bytes}" \
-    "${package_record_source_rebuild_missing_classes}" \
-    "${package_record_source_rebuild_extra_classes}"
-  printf '| byte-exact | %s | %s | %s | %s | %s | %s | %s |\n\n' \
-    "${byte_exact_source_rebuild_original_classes}" \
-    "${byte_exact_source_rebuild_classes}" \
-    "${byte_exact_source_rebuild_common_classes}" \
-    "${byte_exact_source_rebuild_same_class_bytes}" \
-    "${byte_exact_source_rebuild_different_class_bytes}" \
-    "${byte_exact_source_rebuild_missing_classes}" \
-    "${byte_exact_source_rebuild_extra_classes}"
+  printf '| Mode | Source-recompiled class bytes same | Original app classes | Recompiled classes | Common | Same class bytes | Different class bytes | Missing recompiled classes | Extra recompiled classes | Compile fallback classes |\n'
+  printf '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n'
+  printf '| package-record | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n' \
+    "${package_record_source_rebuild_report_same}" \
+    "${package_record_source_rebuild_report_original_classes}" \
+    "${package_record_source_rebuild_report_classes}" \
+    "${package_record_source_rebuild_report_common_classes}" \
+    "${package_record_source_rebuild_report_same_class_bytes}" \
+    "${package_record_source_rebuild_report_different_class_bytes}" \
+    "${package_record_source_rebuild_report_missing_classes}" \
+    "${package_record_source_rebuild_report_extra_classes}" \
+    "${package_record_source_rebuild_report_compile_fallback_classes}"
+  printf '| byte-exact | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n\n' \
+    "${byte_exact_source_rebuild_report_same}" \
+    "${byte_exact_source_rebuild_report_original_classes}" \
+    "${byte_exact_source_rebuild_report_classes}" \
+    "${byte_exact_source_rebuild_report_common_classes}" \
+    "${byte_exact_source_rebuild_report_same_class_bytes}" \
+    "${byte_exact_source_rebuild_report_different_class_bytes}" \
+    "${byte_exact_source_rebuild_report_missing_classes}" \
+    "${byte_exact_source_rebuild_report_extra_classes}" \
+    "${byte_exact_source_rebuild_report_compile_fallback_classes}"
   printf '## Remaining gaps\n\n'
   printf '| Mode | Gap count | Categories |\n'
   printf '| --- | ---: | --- |\n'
@@ -1490,6 +1504,11 @@ check_gate "package-record rebuilt SHA" "${package_record_rebuilt_sha256}" "${OR
 check_gate "package-record artifact SHA" "${package_record_artifact_sha256}" "${ORIGINAL_SHA256}"
 check_gate "package-record parity parse failures" "${package_record_parity_parse_failures}" "0"
 check_gate "package-record parity missing-source methods" "${package_record_parity_missing_source_methods}" "0"
+check_gate "package-record source rebuild report exact" "${package_record_source_rebuild_report_same}" "true"
+check_gate "package-record source rebuild report fallback classes" "${package_record_source_rebuild_report_compile_fallback_classes}" "0"
+check_gate "package-record source rebuild report class byte diffs" "${package_record_source_rebuild_report_different_class_bytes}" "0"
+check_gate "package-record source rebuild report missing classes" "${package_record_source_rebuild_report_missing_classes}" "0"
+check_gate "package-record source rebuild report extra classes" "${package_record_source_rebuild_report_extra_classes}" "0"
 
 check_gate "byte-exact jar2mp exit" "${byte_exact_exit_code}" "0"
 check_gate "byte-exact verification summary" "${byte_exact_verification_summary}" "BUILD SUCCESS"
@@ -1506,6 +1525,11 @@ check_gate "byte-exact rebuilt SHA" "${byte_exact_rebuilt_sha256}" "${ORIGINAL_S
 check_gate "byte-exact artifact SHA" "${byte_exact_artifact_sha256}" "${ORIGINAL_SHA256}"
 check_gate "byte-exact parity parse failures" "${byte_exact_parity_parse_failures}" "0"
 check_gate "byte-exact parity missing-source methods" "${byte_exact_parity_missing_source_methods}" "0"
+check_gate "byte-exact source rebuild report exact" "${byte_exact_source_rebuild_report_same}" "true"
+check_gate "byte-exact source rebuild report fallback classes" "${byte_exact_source_rebuild_report_compile_fallback_classes}" "0"
+check_gate "byte-exact source rebuild report class byte diffs" "${byte_exact_source_rebuild_report_different_class_bytes}" "0"
+check_gate "byte-exact source rebuild report missing classes" "${byte_exact_source_rebuild_report_missing_classes}" "0"
+check_gate "byte-exact source rebuild report extra classes" "${byte_exact_source_rebuild_report_extra_classes}" "0"
 
 log "Summary written to ${MD_REPORT}"
 log "CSV written to ${CSV_REPORT}"

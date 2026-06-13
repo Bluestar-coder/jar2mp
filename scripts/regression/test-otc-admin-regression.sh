@@ -75,6 +75,10 @@ assert_contains "${script_source}" "Source rebuild class bytecode fidelity" "mar
 assert_contains "${script_source}" "otc-admin-source-rebuild-bytecode.md" "source rebuild fidelity report"
 assert_contains "${script_source}" "package_record_source_rebuild_same_class_bytes" "package-record source rebuild metric"
 assert_contains "${script_source}" "byte_exact_source_rebuild_same_class_bytes" "byte-exact source rebuild metric"
+assert_contains "${script_source}" "source-rebuild-fidelity-summary.csv" "generic source rebuild fidelity summary"
+assert_contains "${script_source}" "package_record_source_rebuild_report_same" "package-record generic source rebuild exact gate"
+assert_contains "${script_source}" "byte_exact_source_rebuild_report_same" "byte-exact generic source rebuild exact gate"
+assert_contains "${script_source}" "source rebuild report fallback classes" "generic source rebuild fallback gate"
 
 help_output="$(bash "${SCRIPT}" --help)"
 assert_contains "${help_output}" "OTC_ADMIN_JAR" "sample path env"
