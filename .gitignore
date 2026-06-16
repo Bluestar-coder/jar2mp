@@ -43,3 +43,4 @@ build/
 .codegraph/
 .understand-anything/
 otc-admin/
+.nvmrc
